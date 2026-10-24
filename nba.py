@@ -172,7 +172,8 @@ def guncelle(yazdir=print, ilerleme=None, hazirlik=False, kadro_zorla=False):
         alinan = {r[0] for r in con.execute("SELECT DISTINCT mac_id FROM nba_kutu")}
         yok = {r[0] for r in con.execute("SELECT mac_id FROM nba_kutu_yok")}
         takim = pd.read_sql("SELECT * FROM nba_takim", con).set_index("takim_id")
-    yazdir(f"Arşivde {len(maclar)} NBA maçı var.")
+    yazdir(f"Arşivde {len(maclar)} biten NBA maçı var; "
+           f"{len(alinan & set(maclar['mac_id']))} tanesinin kutu skoru veritabanında.")
 
     # Takımlar ve kadrolar
     adlar = {**dict(zip(maclar["ev_id"], maclar["ev"])), **dict(zip(maclar["dep_id"], maclar["dep"]))}
@@ -206,6 +207,10 @@ def guncelle(yazdir=print, ilerleme=None, hazirlik=False, kadro_zorla=False):
         yeni = maclar[~maclar["mac_id"].isin(alinan | yok)].sort_values("ts")
         if len(yeni):
             yazdir(f"Kutu skor: {len(yeni)} yeni maç çekilecek (maç başına 1 istek).")
+        elif len(maclar):
+            son = datetime.fromtimestamp(int(maclar["ts"].max()), mk.TZ).strftime("%d.%m %H:%M")
+            yazdir(f"Kutu skorlar güncel: yeni biten NBA maçı yok (arşivdeki son maç {son}). Maçlar bitip "
+                   "Maçkolik'e düştükten sonra yeniden güncelleyin.")
         for i, m in enumerate(yeni.itertuples(), 1):
             veri = mk.sayfa_al(KUTU_URL, {"matchId": m.mac_id}, json_mi=True)
             gorunum = ((veri or {}).get("data") or {}).get("views") or {}
