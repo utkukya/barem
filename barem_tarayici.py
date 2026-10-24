@@ -67,7 +67,9 @@ ust_sol, ust_sag = st.columns([4, 1], vertical_alignment="bottom")
 with ust_sol:
     st.title("Barem Tarayıcı")
 with ust_sag:
-    pencere = st.popover("Baremleri güncelle", icon="🔄", width="stretch")
+    from ortam import KAPALI_YARDIM, guncelleme_acik
+    pencere = st.popover("Baremleri güncelle", icon="🔄", width="stretch", disabled=not guncelleme_acik(),
+                         help=None if guncelleme_acik() else KAPALI_YARDIM)
 with pencere:
     from iddaa_baremler import LIGLER, VARSAYILAN_LIGLER, guncelle
     ayar = ayar_oku()

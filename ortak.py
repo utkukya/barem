@@ -16,6 +16,15 @@ def veritabani_kontrol():
         st.toast(f"futbol.db oluşturuldu: {csv.name}", icon="✅")
         return
 
+    # Kurulum CSV'si yoksa boş veritabanıyla devam edilir: maçlar ve istatistikler "Baremleri güncelle" ile
+    # Maçkolik ve Ofsayt'tan gelir (ör. kodu başka bir bilgisayara çekince).
+    if csv is None:
+        import sqlite3
+        with sqlite3.connect(DB) as con:
+            con.execute("CREATE TABLE IF NOT EXISTS maclar (lig TEXT, mac_id INTEGER, tarih TEXT, hafta TEXT, "
+                        "saha TEXT, takim TEXT, rakip TEXT, takim_gol REAL, rakip_gol REAL)")
+        return
+
     st.error("Maç verisi bulunamadı.")
     st.markdown(
         f"Uygulama veritabanını şu klasörde arıyor:\n\n`{KLASOR}`\n\n"

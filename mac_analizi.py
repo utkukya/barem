@@ -44,6 +44,10 @@ with st.sidebar:
     else:
         takimlar = sorted(ozet_takim[(ozet_takim["lig"] == lig) & ozet_takim["guncel"]].index)
     # Varsayılanlar (Barem Tarayıcı'dan gelinirse orada seçilen maç kullanılır)
+    if not takimlar:
+        st.info("Henüz takım verisi yok. **Barem Tarayıcı** sayfasındaki **Baremleri güncelle** penceresinden "
+                "güncellemeyi başlatın.")
+        st.stop()
     if st.session_state.get("ma_ev") not in takimlar:
         st.session_state["ma_ev"] = takimlar[0]
     if st.session_state.get("ma_dep") not in takimlar:

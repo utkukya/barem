@@ -64,7 +64,9 @@ ust_sol, ust_sag = st.columns([4, 1], vertical_alignment="bottom")
 with ust_sol:
     st.title("Basketbol")
 with ust_sag:
-    pencere = st.popover("Baremleri güncelle", icon="🔄", width="stretch")
+    from ortam import KAPALI_YARDIM, guncelleme_acik
+    pencere = st.popover("Baremleri güncelle", icon="🔄", width="stretch", disabled=not guncelleme_acik(),
+                         help=None if guncelleme_acik() else KAPALI_YARDIM)
 with pencere:
     ayar = ayar_oku()
     secenek = {0: "Bugün", 1: "24 saat", 2: "2 gün", 3: "3 gün", 7: "7 gün"}

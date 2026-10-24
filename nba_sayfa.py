@@ -52,7 +52,9 @@ ust_sol, ust_sag = st.columns([4, 1], vertical_alignment="bottom")
 with ust_sol:
     st.title("NBA")
 with ust_sag:
-    pencere = st.popover("NBA verisini güncelle", icon="🔄", width="stretch")
+    from ortam import KAPALI_YARDIM, guncelleme_acik
+    pencere = st.popover("NBA verisini güncelle", icon="🔄", width="stretch", disabled=not guncelleme_acik(),
+                         help=None if guncelleme_acik() else KAPALI_YARDIM)
 with pencere:
     st.caption("Kaynak Maçkolik: yeni maçların kutu skorları (maç başına 1 istek), takım kadroları ve pozisyonlar "
                "(3 günde bir, takım başına 1 istek). Daha önce çekilen maçlar tekrar indirilmez.")

@@ -3,9 +3,12 @@
 __pycache__/
 *.pyc
 
-# Veritabanları ve büyük veri dosyaları (bilgisayarda yeniden oluşturulur)
-*.db
+# Veritabanları depoya gider (Streamlit Cloud bunları okur); geçici dosyaları gitmez
 *.db-journal
+*.db-wal
+*.db-shm
+
+# Büyük kurulum CSV'leri (gerekli değil)
 maclar_tum_istatistikler.csv
 son10_takim_bazli.csv
 
