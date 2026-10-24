@@ -1,0 +1,13 @@
+# Sanal ortam ve önbellek
+.venv/
+__pycache__/
+*.pyc
+
+# Veritabanları ve büyük veri dosyaları (bilgisayarda yeniden oluşturulur)
+*.db
+*.db-journal
+maclar_tum_istatistikler.csv
+son10_takim_bazli.csv
+
+# Kişisel ayarlar
+ayarlar.json
