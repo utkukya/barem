@@ -122,8 +122,9 @@ with st.sidebar:
 pt = poz_tablosu(damga, stat, n)
 stat_ad = nba.STATLAR[stat][0]
 
-sekme_kart, sekme_deger, sekme_eslesme, sekme_sira, sekme_oyuncu = st.tabs(
-    ["📈 Oyuncu kartı", "💰 Oyuncu baremleri", "⚔️ Pozisyon eşleşme", "🏆 Pozisyon sıralaması", "👤 Oyuncular"])
+sekme_tarama, sekme_kart, sekme_deger, sekme_eslesme, sekme_sira, sekme_oyuncu = st.tabs(
+    ["🎯 Barem tarayıcı", "📈 Oyuncu kartı", "💰 Değer (EV)", "⚔️ Pozisyon eşleşme", "🏆 Pozisyon sıralaması",
+     "👤 Oyuncular"])
 
 
 @st.cache_data(show_spinner="Oyuncu baremleri değerlendiriliyor…")
@@ -416,7 +417,7 @@ with sekme_oyuncu:
     st.caption(f"{len(gor)} oyuncu · ortalamalar {donem_ad[donem or 0].lower()} · satıra tıklayınca maç maç "
                "dökümü ve barem isabeti açılır.")
     sec = secim.selection.rows if secim and secim.selection else []
-    if sec:
+    if sec and sec[0] < len(gor):
         oid = gor.index[sec[0]]
         r = g.loc[oid]
         log = kutu[kutu["oyuncu_id"] == oid].sort_values("ts")
@@ -759,3 +760,123 @@ with sekme_kart:
             <small style="color:#888">#1 = en çok yediren. ▲ ilk üçte bir, ▼ son üçte bir.</small></div>
         </div>"""
         st.html(sag_html)
+
+
+# ================================================================ Barem tarayıcı
+@st.cache_data(show_spinner="Oyuncu baremleri son maçlarla karşılaştırılıyor…")
+def tarama(damga, n):
+    _, kutu_, _, _ = veri(damga)
+    return nba.barem_tarayici(nba.props_yukle(), kutu_, n)
+
+
+TARAMA_STAT = ["sayi", "rib", "ast", "uc_i", "pra", "pr", "pa", "ra", "tc", "blok", "tk"]
+
+
+def yuzde_n(v, k):
+    return "–" if pd.isna(v) else f"{100 * v:3.0f}% ({int(k)})"
+
+
+with sekme_tarama:
+    if nba.props_yukle().empty:
+        st.info("Henüz oyuncu baremi yok. **NBA verisini güncelle** penceresinde 'Oyuncu baremlerini global piyasadan "
+                "çek' seçiliyken güncellemeyi başlatın.")
+    else:
+        a1, a2, a3, a4 = st.columns([1, 1.3, 1.5, 1.2])
+        n_t = a1.selectbox("Kaç maça bakılsın", [5, 10, 15, 20], index=1, key="nba_t_n")
+        yon_t = a2.segmented_control("Taraf", ["Üst", "Alt"], selection_mode="multi", default=["Üst", "Alt"],
+                                     key="nba_t_yon") or ["Üst", "Alt"]
+        oran_t = a3.slider("Oran", 1.0, 6.0, (1.3, 6.0), 0.05, key="nba_t_oran")
+        form_t = a4.slider("En az form", 0, 100, 60, 5, key="nba_t_form", format="%d%%")
+        t = tarama(damga, n_t)
+        if t.empty:
+            st.warning("Baremlerdeki oyuncular veritabanındaki oyuncularla eşleşmedi.")
+        else:
+            mevcut = [k for k in TARAMA_STAT if k in set(t["stat"])]
+            stat_t = st.pills("İstatistik", mevcut, selection_mode="multi", default=mevcut, key="nba_t_stat",
+                              format_func=lambda k: nba.STATLAR[k][0]) or mevcut
+            b1, b2, b3 = st.columns([2, 2, 1])
+            mac_t = b1.multiselect("Maç", sorted(t["Maç"].unique()), key="nba_t_mac", placeholder="Tüm maçlar")
+            tk_t = b2.multiselect("Takım", sorted(t["Takım"].dropna().unique()), key="nba_t_takim",
+                                  placeholder="Tüm takımlar")
+            en_az_t = b3.number_input("En az maç", 1, 20, 2, key="nba_t_enaz")
+            g = t[t["stat"].isin(stat_t) & t["Yön"].isin(yon_t) & t["Oran"].between(*oran_t)
+                  & (t["Form"].fillna(0) >= form_t / 100) & (t["Maç sayısı"] >= en_az_t)]
+            if mac_t:
+                g = g[g["Maç"].isin(mac_t)]
+            if tk_t:
+                g = g[g["Takım"].isin(tk_t)]
+            g = g.sort_values(["Form", "Rakip izin", "Değer"], ascending=False).reset_index(drop=True)
+            st.caption(f"{len(g)} barem · {g['Oyuncu'].nunique()} oyuncu · Form: oyuncunun son {n_t} maçında bu "
+                       "tarafı tutturma oranı (parantez: maç sayısı). Rakip izin: rakibin aynı roldeki ilk 5 "
+                       f"oyuncularına son {n_t} maçta bu tarafı yaşattığı maç oranı.")
+            saat = pd.to_datetime(g["baslangic"], utc=True, errors="coerce").dt.tz_convert("Europe/Istanbul")
+            gor = pd.DataFrame({
+                "Oyuncu": g["Oyuncu"], "Takım": g["Takım"], "Rakip": g["Rakip"],
+                "Saat": saat.dt.strftime("%d.%m %H:%M").fillna("–"),
+                "İstatistik": g["İstatistik"], "Barem": g["Yön"] + " " + g["Çizgi"].map("{:g}".format),
+                "Oran": g["Oran"].map("{:.2f}".format),
+                f"Form L{n_t}": [yuzde_n(v, k) for v, k in zip(g["Form"], g["Maç sayısı"])],
+                "Sezon": [yuzde_n(v, k) for v, k in zip(g["Sezon"], g["Sezon maç"])],
+                "Rakip izin": [yuzde_n(v, k) for v, k in zip(g["Rakip izin"], g["Rakip maç"])],
+                "Ort.": g["Ort."], "Rakip izin ort.": g["Rakip izin ort."],
+                "Model": g["Model"].map(lambda v: "–" if pd.isna(v) else f"{100 * v:3.0f}%"),
+                "Değer": g["Değer"].map(lambda v: "–" if pd.isna(v) else f"{100 * v:+.0f}%"),
+                "Rol": g["Rol"],
+            })
+
+            def renk_y(v):
+                if pd.isna(v):
+                    return ""
+                if v >= 0.7:
+                    return "color:#0a7a3f;font-weight:600"
+                if v <= 0.5:
+                    return "background-color:#fdecc8;color:#8a5a00"
+                return ""
+
+            def renkler_t(_):
+                css = pd.DataFrame("", index=gor.index, columns=gor.columns)
+                css[f"Form L{n_t}"] = g["Form"].map(renk_y)
+                css["Sezon"] = g["Sezon"].map(renk_y)
+                css["Rakip izin"] = g["Rakip izin"].map(renk_y)
+                css["Model"] = g["Model"].map(renk_y)
+                css["Değer"] = g["Değer"].map(lambda v: "" if pd.isna(v) else
+                                              "color:#0a7a3f;font-weight:600" if v > 0.05 else
+                                              "color:#9a9890" if v < -0.05 else "")
+                css["Barem"] = g["Yön"].map({"Üst": "color:#0a7a3f", "Alt": "color:#b4532a"})
+                return css
+
+            secim_t = st.dataframe(
+                gor.style.format({"Ort.": "{:.1f}", "Rakip izin ort.": "{:.1f}"}, na_rep="–").apply(renkler_t, axis=None),
+                hide_index=True, width="stretch", height=min(36 * (len(gor) + 1) + 4, 640),
+                on_select="rerun", selection_mode="single-row", key="nba_t_tablo",
+                column_config={
+                    "Oran": st.column_config.TextColumn(help="Kambi (Unibet) oranı"),
+                    "Sezon": st.column_config.TextColumn(help="Bu sezonun tüm maçlarında bu tarafı tutturma oranı"),
+                    "Rakip izin": st.column_config.TextColumn(
+                        help="Rakibin, bu oyuncunun rolündeki (PG/SG/SF/PF/C) ilk 5 oyuncularına son maçlarda bu "
+                             "tarafı yaşatma oranı"),
+                    "Rakip izin ort.": st.column_config.Column(
+                        help="Rakibe karşı bu roldeki ilk 5 oyuncularının ortalaması"),
+                    "Model": st.column_config.TextColumn(help="Ortalama, dağılım ve rakip savunmasıyla bu tarafın "
+                                                              "olasılığı (az maçta piyasa çizgisine çekilir)"),
+                    "Değer": st.column_config.TextColumn(help="Model olasılığı × oran − 1"),
+                })
+            sec_t = secim_t.selection.rows if secim_t and secim_t.selection else []
+            if sec_t and sec_t[0] < len(g):
+                r = g.iloc[sec_t[0]]
+                log = kutu[kutu["oyuncu_id"] == r["oyuncu_id"]].sort_values("ts").tail(n_t)
+                log = log.assign(deger=log[r["stat"]],
+                                 Sonuç=np.where((log[r["stat"]] > r["Çizgi"]) if r["Yön"] == "Üst"
+                                                else (log[r["stat"]] < r["Çizgi"]), "Tuttu", "Tutmadı"),
+                                 Etiket=log["tarih"].dt.strftime("%d.%m") + " " +
+                                 np.where(log["saha"] == "Ev", "", "@") + log["rakip"].fillna(""))
+                st.markdown(f"**{r['Oyuncu']}** · {r['İstatistik']} {r['Yön']} {r['Çizgi']:g} · rakip {r['Rakip']}")
+                bar = alt.Chart(log).mark_bar().encode(
+                    x=alt.X("Etiket:N", sort=None, title=None, axis=alt.Axis(labelAngle=0)),
+                    y=alt.Y("deger:Q", title=r["İstatistik"]),
+                    color=alt.Color("Sonuç:N", scale=alt.Scale(domain=["Tuttu", "Tutmadı"], range=[ISABET, ISKA]),
+                                    legend=None),
+                    tooltip=["Etiket", "deger", alt.Tooltip("dk:Q", format=".0f", title="Dakika")])
+                kural = alt.Chart(pd.DataFrame({"c": [r["Çizgi"]]})).mark_rule(
+                    color=CIZGI, strokeDash=[6, 4], size=2).encode(y="c:Q")
+                st.altair_chart((bar + kural).properties(height=240), width="stretch")

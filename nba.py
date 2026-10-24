@@ -733,3 +733,39 @@ def not_harfi(sira, toplam=30):
         return "–"
     harfler = ["A+", "A", "A-", "B+", "B", "B-", "C+", "C", "C-", "D+", "D", "F"]
     return harfler[min(int((sira - 1) / max(toplam, 1) * len(harfler)), len(harfler) - 1)]
+
+
+# ================================================================ barem tarayıcı (Alt/Üst isabetleri)
+def barem_tarayici(props, kutu, n=10, savunma_agirlik=0.5):
+    """Her oyuncu baremi için Üst ve Alt ayrı satır: oyuncunun son n maçta o tarafı tutturma oranı (Form), sezon
+    oranı, rakibin aynı roldeki ilk 5 oyuncularına son n maçta o tarafı yaşatma oranı (Rakip izin), model olasılığı,
+    oran ve beklenen getiri."""
+    d = deger_tablosu(props, kutu, n, savunma_agirlik)
+    if d.empty:
+        return d
+    k = kutu.sort_values("ts")
+    ilk5 = k[k["ilk5"] == 1]
+    takim_id_ = k.drop_duplicates("takim").set_index("takim")["takim_id"]
+    satirlar = []
+    for _, r in d.iterrows():
+        x = k.loc[k["oyuncu_id"] == r["oyuncu_id"], r["stat"]]
+        son = x.tail(n)
+        rakip_id = takim_id_.get(r["Rakip"])
+        izin = ilk5.loc[(ilk5["rakip_id"] == rakip_id) & (ilk5["rol"] == r["Rol"]), r["stat"]].tail(n) \
+            if rakip_id is not None else pd.Series(dtype=float)
+        for yon in ("Üst", "Alt"):
+            ust = yon == "Üst"
+
+            def oran(s):
+                return float(((s > r["Barem"]) if ust else (s < r["Barem"])).mean()) if len(s) else np.nan
+
+            satirlar.append({
+                "Oyuncu": r["Oyuncu"], "Takım": r["Takım"], "Rakip": r["Rakip"], "Maç": r["Maç"],
+                "baslangic": r["baslangic"], "Rol": r["Rol"], "stat": r["stat"], "İstatistik": r["İstatistik"],
+                "Yön": yon, "Çizgi": r["Barem"], "Oran": r["Üst oran"] if ust else r["Alt oran"],
+                "Form": oran(son), "Maç sayısı": len(son), "Sezon": oran(x), "Sezon maç": len(x),
+                "Rakip izin": oran(izin), "Rakip maç": len(izin), "Ort.": float(son.mean()),
+                "Rakip izin ort.": float(izin.mean()) if len(izin) else np.nan,
+                "Model": r["Model Üst"] if ust else 1 - r["Model Üst"],
+                "Değer": r["EV Üst"] if ust else r["EV Alt"], "oyuncu_id": r["oyuncu_id"]})
+    return pd.DataFrame(satirlar)
