@@ -7,6 +7,39 @@ import streamlit as st
 
 st.set_page_config(page_title="Maç İstatistik Tahmin", page_icon="⚽", layout="wide")
 
+
+@st.cache_resource
+def _modul_zamanlari():
+    return {}
+
+
+def _degisen_modulleri_yenile():
+    """Sunucu açıkken dosyalar güncellenirse (ör. Streamlit Cloud'a yeni sürüm gelince) projedeki yardımcı modüller
+    bellekteki eski haliyle kalmasın: değişen dosyalar yeniden yüklenir."""
+    import importlib
+    import sys
+    from pathlib import Path
+    klasor = Path(__file__).resolve().parent
+    zamanlar = _modul_zamanlari()
+    for ad, modul in list(sys.modules.items()):
+        dosya = getattr(modul, "__file__", None)
+        if not dosya or ad == "__main__" or Path(dosya).resolve().parent != klasor:
+            continue
+        try:
+            z = Path(dosya).stat().st_mtime
+        except OSError:
+            continue
+        if ad in zamanlar and zamanlar[ad] != z:
+            try:
+                importlib.reload(modul)
+                st.cache_data.clear()
+            except Exception:
+                pass
+        zamanlar[ad] = z
+
+
+_degisen_modulleri_yenile()
+
 FUTBOL = [
     st.Page("barem_tarayici.py", title="Barem Tarayıcı", icon="🎯", default=True),
     st.Page("mac_listesi.py", title="Maç İstatistikleri", icon="📋"),
