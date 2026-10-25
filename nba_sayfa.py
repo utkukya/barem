@@ -93,6 +93,9 @@ if "nba_guncelleme" in st.session_state:
                     nba.baremleri_guncelle(yazdir=yaz)
                 except Exception as e:
                     yaz(f"Oyuncu baremleri alınamadı: {e}")
+            yaz("Tablolar hazırlanıyor…")
+            import hazir
+            hazir.hepsini_hazirla(yazdir=yaz, sporlar=("nba",))
             durum.update(label="NBA verisi güncellendi", state="complete", expanded=False)
         except Exception as e:
             durum.update(label=f"Güncellenemedi: {e}", state="error")
@@ -129,8 +132,9 @@ sekme_tarama, sekme_kart, sekme_deger, sekme_eslesme, sekme_sira, sekme_oyuncu =
 
 @st.cache_data(show_spinner="Oyuncu baremleri değerlendiriliyor…")
 def deger(damga, n, agirlik):
+    import hazir
     _, kutu_, _, _ = veri(damga)
-    return nba.deger_tablosu(nba.props_yukle(), kutu_, n or 10, agirlik)
+    return hazir.nba_deger(kutu_, n or 10, agirlik)
 
 
 # ================================================================ yardımcılar
@@ -406,6 +410,8 @@ with sekme_oyuncu:
     gor = g.rename(columns={"oyuncu": "Oyuncu", "takim": "Takım", "poz_ad": "Poz"})[
         ["Oyuncu", "Takım", "Poz", "Maç", "İlk 5", "Dk", "Sayı", "Rib", "Ast", "SRA", "3S", "3SD", "TÇ", "Blok", "TK",
          "SG%", "2S%", "3S%", "SA%"]]
+    from ortam import sayfala
+    gor = sayfala(gor, "nba_o")
     fmt = {k: "{:.1f}" for k in ["Dk", "Sayı", "Rib", "Ast", "SRA", "3S", "3SD", "TÇ", "Blok", "TK"]}
     fmt.update({k: "{:.0%}" for k in ["SG%", "2S%", "3S%", "SA%"]})
     secim = st.dataframe(gor.style.format(fmt, na_rep="–"), hide_index=True, width="stretch", height=430,
@@ -765,8 +771,9 @@ with sekme_kart:
 # ================================================================ Barem tarayıcı
 @st.cache_data(show_spinner="Oyuncu baremleri son maçlarla karşılaştırılıyor…")
 def tarama(damga, n):
+    import hazir
     _, kutu_, _, _ = veri(damga)
-    return nba.barem_tarayici(nba.props_yukle(), kutu_, n)
+    return hazir.nba_tarama(kutu_, n)
 
 
 TARAMA_STAT = ["sayi", "rib", "ast", "uc_i", "pra", "pr", "pa", "ra", "tc", "blok", "tk"]
@@ -809,6 +816,8 @@ with sekme_tarama:
             st.caption(f"{len(g)} barem · {g['Oyuncu'].nunique()} oyuncu · Form: oyuncunun son {n_t} maçında bu "
                        "tarafı tutturma oranı (parantez: maç sayısı). Rakip izin: rakibin aynı roldeki ilk 5 "
                        f"oyuncularına son {n_t} maçta bu tarafı yaşattığı maç oranı.")
+            from ortam import sayfala
+            g = sayfala(g, "nba_t").reset_index(drop=True)
             saat = pd.to_datetime(g["baslangic"], utc=True, errors="coerce").dt.tz_convert("Europe/Istanbul")
             gor = pd.DataFrame({
                 "Oyuncu": g["Oyuncu"], "Takım": g["Takım"], "Rakip": g["Rakip"],

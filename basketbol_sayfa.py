@@ -43,10 +43,10 @@ def lig_listesi(gun):
 
 @st.cache_data(show_spinner="Son maçlar baremlerle karşılaştırılıyor…")
 def tablolar(damga, n):
-    bulten, baremler, maclar = bk.verileri_yukle()
-    bt = bk.barem_tablosu(bulten, baremler, maclar, n)
-    mt = bk.mac_tablosu(bulten, bt, maclar, n)
-    return bt, mt, maclar
+    # Barem ve maç tabloları veritabanına hazır olarak da yazılır (hazir.py); yayınlanan sürüm hesaplamadan okur
+    import hazir
+    bt, mt = hazir.basket_tablolar(n)
+    return bt, mt, bk.verileri_yukle()[2]
 
 
 def damga_al():
@@ -132,6 +132,9 @@ if "bb_guncelleme" in st.session_state:
         try:
             mac, barem = bk.guncelle(g["gun"], g["ligler"], yazdir=yaz, takim_verisi=g["takim_verisi"],
                                      ilerleme=ilerle)
+            yaz("Tablolar hazırlanıyor…")
+            import hazir
+            hazir.hepsini_hazirla(yazdir=yaz, sporlar=("basketbol",))
             durum.update(label=f"{mac} maç, {barem} barem güncellendi", state="complete", expanded=False)
         except Exception as e:
             durum.update(label=f"Çekilemedi: {e}", state="error")
@@ -230,6 +233,8 @@ with sekme_mac:
         c1.metric("Maç", len(m))
         c2.metric("Lig", m["Lig"].nunique())
         c3.metric("İki takımın da verisi var", int(((m["Ev n"] > 0) & (m["Dep n"] > 0)).sum()))
+        from ortam import sayfala
+        m = sayfala(m, "bb_mac").reset_index(drop=True)
         gor = pd.DataFrame({
             "Saat": m["Tarih"].dt.strftime("%d.%m %H:%M"), "Lig": m["Lig"], "Maç": m["Maç"],
             "MS 1": m["MS1"].map(oran_m), "MS 2": m["MS2"].map(oran_m),
@@ -305,6 +310,8 @@ with sekme_barem:
     else:
         st.caption(f"{len(t)} barem · {t['event_id'].nunique()} maç · Form: takımın son {n} maçında baremi tutturma "
                    "oranı (maç toplamında ev sahibinin maçları, rakip formda deplasmanın maçları)")
+        from ortam import sayfala
+        t = sayfala(t, "bb_barem").reset_index(drop=True)
         gb = pd.DataFrame({
             "Takım": t["Takım"], "Maç": t["Maç"], "Tarih": t["Tarih"].dt.strftime("%d.%m %H:%M"),
             "Barem": t["Barem"],

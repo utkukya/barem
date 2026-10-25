@@ -652,9 +652,12 @@ def deger_tablosu(props, kutu, n=10, savunma_agirlik=0.5):
     rol_sik = k.groupby("oyuncu_id")["rol"].agg(lambda s: s.value_counts().index[0])
     savunma = {}
     satirlar = []
+    oyuncu_gruplari = dict(tuple(k.groupby("oyuncu_id", sort=False)))
+    bos = k.iloc[0:0]
     for r in p.itertuples():
-        x = k.loc[k["oyuncu_id"] == r.oyuncu_id, r.stat].tail(n)
-        dk = k.loc[k["oyuncu_id"] == r.oyuncu_id, "dk"].tail(n)
+        og = oyuncu_gruplari.get(r.oyuncu_id, bos)
+        x = og[r.stat].tail(n)
+        dk = og["dk"].tail(n)
         if len(x) == 0:
             continue
         ort, sd = float(x.mean()), float(x.std(ddof=1)) if len(x) > 1 else float(np.sqrt(max(x.mean(), 1)))
@@ -752,8 +755,10 @@ def barem_tarayici(props, kutu, n=10, savunma_agirlik=0.5):
     ilk5 = k[k["ilk5"] == 1]
     takim_id_ = k.drop_duplicates("takim").set_index("takim")["takim_id"]
     satirlar = []
+    oyuncu_gruplari = dict(tuple(k.groupby("oyuncu_id", sort=False)))
+    bos = k.iloc[0:0]
     for _, r in d.iterrows():
-        x = k.loc[k["oyuncu_id"] == r["oyuncu_id"], r["stat"]]
+        x = oyuncu_gruplari.get(r["oyuncu_id"], bos)[r["stat"]]
         son = x.tail(n)
         rakip_id = takim_id_.get(r["Rakip"])
         izin = ilk5.loc[(ilk5["rakip_id"] == rakip_id) & (ilk5["rol"] == r["Rol"]), r["stat"]].tail(n) \

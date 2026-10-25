@@ -23,8 +23,10 @@ def mac_verisi():
 
 @st.cache_data(show_spinner="Son maçlar baremlerle karşılaştırılıyor…")
 def isabet_tablosu(n, cekim, damga, surum):
-    # surum: barem.py'deki hesaplama sürümü; dosya güncellenince önbellek kendiliğinden yenilenir
-    return tablo_olustur(mac_verisi(), baremleri_yukle(), n, cekim)
+    # surum: barem.py'deki hesaplama sürümü; dosya güncellenince önbellek kendiliğinden yenilenir.
+    # Tablo veritabanına hazır olarak da yazılır (hazir.py): yayınlanan sürüm hesaplamadan okur.
+    import hazir
+    return hazir.futbol_barem(n, cekim)
 
 
 def damga_al():
@@ -150,6 +152,9 @@ if "guncelleme" in st.session_state:
         try:
             adet, eslesmeyen, _ = guncelle(g["gun"], yazdir=yaz, ligler=g["ligler"] or None,
                                            takim_verisi=g["takim_verisi"], ilerleme=ilerle)
+            yaz("Tablolar hazırlanıyor (barem tarayıcı ve maç istatistikleri; sayfalar bundan sonra hızlı açılır)…")
+            import hazir
+            hazir.hepsini_hazirla(yazdir=yaz, sporlar=("futbol",))
             durum.update(label=f"{adet} barem güncellendi", state="complete", expanded=bool(eslesmeyen))
         except Exception as e:
             durum.update(label=f"Çekilemedi: {e}", state="error")
@@ -249,6 +254,8 @@ if t.empty:
 
 st.caption(f"{len(t)} barem · {t['event_id'].nunique()} maç · iddaa verisi: {damga} · "
            f"Form: takımın son {n} maçında baremi tutturma oranı")
+from ortam import sayfala
+t = sayfala(t, "bt").reset_index(drop=True)
 
 # ---------------- Tablo ----------------
 def yuzde_metin(v):
@@ -347,7 +354,7 @@ st.caption("Satıra tıklayınca altta son maçların barem karşısındaki graf
 
 # ---------------- Seçilen satırın ayrıntısı ----------------
 satir_sec = secim.selection.rows if secim and secim.selection else []
-if not satir_sec:
+if not satir_sec or satir_sec[0] >= len(t):
     st.stop()
 r = t.iloc[satir_sec[0]]
 df = mac_verisi()

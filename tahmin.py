@@ -156,8 +156,13 @@ MIN_LIG_SATIR = 40  # bu kadar veri yoksa lig ortalaması güvenilmez -> tüm ve
 
 def ana_lig(df, takim):
     """Takımın en çok maç oynadığı lig (kupa maçları karışık olduğunda son maçın ligi yanıltıcı)."""
-    d = df.loc[df["takim"] == takim, "lig"]
-    return d.mode().iloc[0] if len(d) else None
+    gruplar = _takim_gruplari(df)
+    k = ("ana_lig", takim)
+    if k not in _onbellek["sonuc"]:
+        g = gruplar.get(takim)
+        d = g["lig"] if g is not None else df.iloc[0:0]["lig"]
+        _onbellek["sonuc"][k] = d.mode().iloc[0] if len(d.dropna()) else None
+    return _onbellek["sonuc"][k]
 
 
 def lig_istatistikleri(df, lig, anahtar, periyot=""):

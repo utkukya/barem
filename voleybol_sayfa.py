@@ -221,6 +221,8 @@ with sekme_mac:
         c1.metric("Maç", len(m))
         c2.metric("Lig", m["Lig"].nunique())
         c3.metric("İki takımın da verisi var", int(((m["Ev n"] > 0) & (m["Dep n"] > 0)).sum()))
+        from ortam import sayfala
+        m = sayfala(m, "vb_mac").reset_index(drop=True)
         gor = pd.DataFrame({
             "Saat": m["Tarih"].dt.strftime("%d.%m %H:%M"), "Lig": m["Lig"], "Maç": m["Maç"],
             "MS 1": m["MS1"].map(oran_m), "MS 2": m["MS2"].map(oran_m),
@@ -289,6 +291,8 @@ with sekme_oran:
         st.caption(f"{len(t)} seçenek · {t['event_id'].nunique()} maç · Ev L / Dep L: seçeneğin ev sahibinin ve "
                    f"deplasmanın son {n} maçında tutma oranı (takıma bağlı seçeneklerde rakibin maçları ters açıdan "
                    "okunur: ör. MS 1 için deplasmanın kaybettiği maçlar)")
+        from ortam import sayfala
+        t = sayfala(t, "vb_oran").reset_index(drop=True)
         gb = pd.DataFrame({
             "Maç": t["Maç"], "Tarih": t["Tarih"].dt.strftime("%d.%m %H:%M"), "Pazar": t["Pazar"],
             "Seçenek": t["Seçenek"], "Oran": t["Oran"].map(oran_m),

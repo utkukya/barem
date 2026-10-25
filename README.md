@@ -38,7 +38,7 @@ Veritabanları depoda yoktur; uygulama ilk açılışta boş başlar. Her sayfad
 Bulutta çalışan sürüm veri çekmez; güncelleme düğmeleri kapalıdır. Veriler yerel bilgisayarda güncellenir:
 
 1. Yerelde `streamlit run app.py` ile uygulamayı açıp sayfalardaki güncellemeleri çalıştırın.
-2. `yayinla.bat` dosyasına çift tıklayın (veritabanlarını GitHub'a gönderir).
+2. `yayinla.bat` dosyasına çift tıklayın: önce ağır tabloları hesaplayıp veritabanına yazar (`python hazir.py`), sonra veritabanlarını GitHub'a gönderir. Yayındaki sürüm bu hazır tabloları hesaplama yapmadan okur.
 3. Streamlit Cloud birkaç dakika içinde yeni veriyle açılır.
 
 Yerelde güncelleme her zaman açıktır; `BAREM_GUNCELLEME=0` / `1` ortam değişkeniyle zorlanabilir.
