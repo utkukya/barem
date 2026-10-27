@@ -23,7 +23,7 @@ Veritabanları depoda yoktur; uygulama ilk açılışta boş başlar. Her sayfad
 
 - **Futbol:** Barem Tarayıcı → *Baremleri güncelle*. İlk seferde Maçkolik'in son 45 günlük sonuç arşivi çekilir (gün başına 1 istek, birkaç dakika sürer).
 - **Basketbol / Voleybol:** sayfadaki *Baremleri güncelle*.
-- **NBA:** *NBA verisini güncelle* (sezonun kutu skorları, takım kadroları, iddaa bülteni ve oyuncu baremleri).
+- **NBA / EuroLeague:** *NBA verisini güncelle* / *EuroLeague verisini güncelle* (sezonun kutu skorları, takım kadroları, iddaa bülteni ve oyuncu baremleri). İki lig aynı kodu kullanır (`nba.py`, `ligler.py`).
 
 ## Veri kaynakları
 

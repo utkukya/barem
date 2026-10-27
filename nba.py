@@ -32,8 +32,13 @@ POZ = {1: "PG", 2: "SG", 3: "SF", 4: "PF", 5: "C"}
 POZLAR = list(POZ.values())
 KUTU_URL = "https://www.mackolik.com/ajax/basketball/match/box-score"
 KADRO_URL = "https://www.mackolik.com/basketbol/takim/{slug}/kadro/{tid}"
-NBA_LIG = "NBA"
-NBA_ULKE = "ABD"
+NBA_LIG = "NBA"          # Maçkolik'teki lig adı
+NBA_ULKE = "ABD"         # Maçkolik'teki ülke adı
+BASLIK = "NBA"           # arayüzde görünen ad
+SEZON_ADI = "2026-27"
+IDDAA_CI = {138}         # iddaa yarışma kimliği (ABD Amerika Basketbol Ligi)
+KAMBI_LISTE = "listView/basketball/nba.json"
+# Aynı kod EuroLeague için de kullanılır: ligler.py bu sabitleri değiştirip modülün ayrı bir kopyasını yükler.
 
 # İstatistikler: anahtar -> (etiket, kısa)
 STATLAR = {"sayi": ("Sayı", "SAY"), "rib": ("Ribaund", "RİB"), "ast": ("Asist", "AST"),
@@ -156,7 +161,7 @@ def _sluglari_bul(eksik, yazdir):
 
 
 def guncelle(yazdir=print, ilerleme=None, hazirlik=False, kadro_zorla=False):
-    """Maçkolik arşivini günceller; yeni NBA maçlarının kutu skorlarını ve takım kadrolarını çeker."""
+    """Maçkolik arşivini günceller; ligin yeni maçlarının kutu skorlarını ve takım kadrolarını çeker."""
     import basketbol
     try:
         mk.arsiv_guncelle(basketbol.DB, "basketbol", yazdir=yazdir)
@@ -172,7 +177,7 @@ def guncelle(yazdir=print, ilerleme=None, hazirlik=False, kadro_zorla=False):
         alinan = {r[0] for r in con.execute("SELECT DISTINCT mac_id FROM nba_kutu")}
         yok = {r[0] for r in con.execute("SELECT mac_id FROM nba_kutu_yok")}
         takim = pd.read_sql("SELECT * FROM nba_takim", con).set_index("takim_id")
-    yazdir(f"Arşivde {len(maclar)} biten NBA maçı var; "
+    yazdir(f"Arşivde {len(maclar)} biten {BASLIK} maçı var; "
            f"{len(alinan & set(maclar['mac_id']))} tanesinin kutu skoru veritabanında.")
 
     # Takımlar ve kadrolar
@@ -209,7 +214,7 @@ def guncelle(yazdir=print, ilerleme=None, hazirlik=False, kadro_zorla=False):
             yazdir(f"Kutu skor: {len(yeni)} yeni maç çekilecek (maç başına 1 istek).")
         elif len(maclar):
             son = datetime.fromtimestamp(int(maclar["ts"].max()), mk.TZ).strftime("%d.%m %H:%M")
-            yazdir(f"Kutu skorlar güncel: yeni biten NBA maçı yok (arşivdeki son maç {son}). Maçlar bitip "
+            yazdir(f"Kutu skorlar güncel: yeni biten {BASLIK} maçı yok (arşivdeki son maç {son}). Maçlar bitip "
                    "Maçkolik'e düştükten sonra yeniden güncelleyin.")
         for i, m in enumerate(yeni.itertuples(), 1):
             veri = mk.sayfa_al(KUTU_URL, {"matchId": m.mac_id}, json_mi=True)
@@ -238,7 +243,7 @@ def guncelle(yazdir=print, ilerleme=None, hazirlik=False, kadro_zorla=False):
 
 
 def bulten_guncelle(gun=1, yazdir=print):
-    """iddaa'daki NBA maçları (maç sonucu, toplam ve takım toplamı baremleri)."""
+    """iddaa'daki lig maçları (maç sonucu, toplam ve takım toplamı baremleri)."""
     import basketbol
     import iddaa_baremler as ib
     cfg = ib.get("get_market_config").get("m", {})
@@ -250,9 +255,11 @@ def bulten_guncelle(gun=1, yazdir=print):
         _tablolar(con)
         nba_takimlari = {r[0] for r in con.execute("SELECT ev_id FROM nba_mac UNION SELECT dep_id FROM nba_mac")}
     if not nba_takimlari:
-        yazdir("Önce NBA verisini güncelleyin (takımlar henüz bilinmiyor).")
+        yazdir(f"Önce {BASLIK} verisini güncelleyin (takımlar henüz bilinmiyor).")
         return 0
     eslesme = mk.iddaa_eslesme("basketbol", secili, yazdir)
+    # Yalnızca bu ligin iddaa yarışması (EuroLeague takımlarının yerel lig maçları karışmasın)
+    secili = [e for e in secili if not IDDAA_CI or e.get("ci") in IDDAA_CI]
     nba = [e for e in secili if e["i"] in eslesme and eslesme[e["i"]]["ev_id"] in nba_takimlari]
     detay = ib._detaylari_cek(nba, yazdir) if nba else {}
     satirlar = []
@@ -275,7 +282,7 @@ def bulten_guncelle(gun=1, yazdir=print):
                                                                            index=False)
         con.execute("CREATE TABLE IF NOT EXISTS nba_meta (anahtar TEXT PRIMARY KEY, deger TEXT)")
         con.execute("INSERT OR REPLACE INTO nba_meta VALUES ('bulten', ?)", (simdi.strftime("%Y-%m-%d %H:%M"),))
-    yazdir(f"iddaa'da {len(satirlar)} NBA maçı bulundu.")
+    yazdir(f"iddaa'da {len(satirlar)} {BASLIK} maçı bulundu.")
     return len(satirlar)
 
 
@@ -488,10 +495,11 @@ _kambi_durum = {}
 
 
 def _prop_stat(etiket):
-    a = (etiket or "").lower()
-    if "player" not in a or any(x in a for x in PROP_DISLA) or re.match(r"\s*\d+\+", a) \
-            or "steals & blocks" in a:
-        return None  # "10+ sayı" gibi Evet/Hayır pazarları ve birleşik top çalma+blok alınmaz
+    """Pazar adından istatistik. "10+ Points Scored By The Player" gibi eşik pazarlarında da istatistik döner
+    (eşik ayrıca _esik ile okunur)."""
+    a = re.sub(r"^\s*\d+\+\s*", "", (etiket or "").lower())
+    if "player" not in a or any(x in a for x in PROP_DISLA) or "steals & blocks" in a:
+        return None  # birleşik top çalma + blok alınmaz
     for kelimeler, stat in PROP_STAT:
         if all(k in a for k in kelimeler):
             return stat
@@ -507,18 +515,36 @@ def _oyuncu_adi(ad):
     return ad
 
 
+def _esik(etiket):
+    m = re.match(r"\s*(\d+)\+", etiket or "")
+    return int(m.group(1)) if m else None
+
+
 def prop_ayristir(veri):
-    """Kambi betoffer/event yanıtı -> [{oyuncu, stat, cizgi, ust_oran, alt_oran, pazar}]."""
-    sonuc = {}
+    """Kambi betoffer/event yanıtı -> [{oyuncu, stat, cizgi, ust_oran, alt_oran, pazar}].
+    Alt/Üst çizgileri iki oranla gelir. "10+ sayı" gibi eşik pazarları (yalnızca Evet oranı) Üst 9.5 olarak alınır
+    (alt_oran boş) — ama o oyuncunun aynı istatistikte Alt/Üst çizgisi varsa eşik pazarları eklenmez."""
+    sonuc, esikler = {}, {}
     for b in (veri or {}).get("betOffers", []) or []:
         kriter = b.get("criterion") or {}
         stat = _prop_stat(kriter.get("englishLabel") or kriter.get("label"))
         if not stat:
             continue
+        etiket_ad = kriter.get("englishLabel") or kriter.get("label")
+        esik = _esik(etiket_ad)
         for o in b.get("outcomes", []) or []:
-            if o.get("line") is None or not o.get("odds") or o.get("status", "OPEN") != "OPEN":
+            if not o.get("odds") or o.get("status", "OPEN") != "OPEN":
                 continue
             tur = (o.get("type") or "").upper()
+            if esik is not None:
+                oyuncu = _oyuncu_adi(o.get("participant") or "")
+                if tur == "OT_YES" and oyuncu:
+                    esikler[(oyuncu, stat, esik - 0.5)] = {"oyuncu": oyuncu, "stat": stat, "cizgi": esik - 0.5,
+                                                           "pazar": etiket_ad, "ust_oran": o["odds"] / 1000,
+                                                           "alt_oran": None}
+                continue
+            if o.get("line") is None:
+                continue
             etiket = (o.get("englishLabel") or o.get("label") or "").lower()
             yon = "ust" if tur == "OT_OVER" or etiket.startswith("over") else \
                   "alt" if tur == "OT_UNDER" or etiket.startswith("under") else None
@@ -529,15 +555,17 @@ def prop_ayristir(veri):
             sonuc.setdefault(k, {"oyuncu": oyuncu, "stat": stat, "cizgi": o["line"] / 1000,
                                  "pazar": kriter.get("englishLabel") or kriter.get("label")})
             sonuc[k][f"{yon}_oran"] = o["odds"] / 1000
-    return [r for r in sonuc.values() if r.get("ust_oran") and r.get("alt_oran")]
+    tam = [r for r in sonuc.values() if r.get("ust_oran") and r.get("alt_oran")]
+    cizgili = {(r["oyuncu"], r["stat"]) for r in tam}
+    return tam + [r for k, r in esikler.items() if (k[0], k[1]) not in cizgili]
 
 
 def baremleri_guncelle(yazdir=print):
     """Oynanacak NBA maçlarının oyuncu baremlerini (Alt/Üst ve oranlar) Kambi'den çeker; nba_prop tablosuna yazar."""
-    liste = _kambi("listView/basketball/nba.json") or {}
+    liste = _kambi(KAMBI_LISTE) or {}
     olaylar = [e.get("event") or {} for e in liste.get("events", [])]
     olaylar = [e for e in olaylar if e.get("state") == "NOT_STARTED" and e.get("id")]
-    yazdir(f"Global piyasa (Kambi): {len(olaylar)} oynanacak NBA maçı.")
+    yazdir(f"Global piyasa (Kambi): {len(olaylar)} oynanacak {BASLIK} maçı.")
     satirlar, cekilme = [], datetime.now().strftime("%Y-%m-%d %H:%M")
     for e in olaylar:
         try:
@@ -678,10 +706,13 @@ def deger_tablosu(props, kutu, n=10, savunma_agirlik=0.5):
         beklenen = (len(x) * ort * carpan + ONSEL_MAC * r.cizgi) / (len(x) + ONSEL_MAC)
         sd = sd * np.sqrt(1 + ONSEL_MAC / (len(x) + ONSEL_MAC))
         p_model = _normal_ust(beklenen, sd, r.cizgi)
-        ters_u, ters_a = 1 / r.ust_oran, 1 / r.alt_oran
-        p_piyasa = ters_u / (ters_u + ters_a)
+        alt_var = pd.notna(r.alt_oran) and r.alt_oran
+        ters_u = 1 / r.ust_oran
+        # Eşik pazarında (yalnızca Üst) bahis şirketi payı ayıklanamaz: 1 / oran
+        p_piyasa = ters_u / (ters_u + 1 / r.alt_oran) if alt_var else min(ters_u, 1.0)
         isabet = float((x > r.cizgi).mean())
-        ev_u, ev_a = p_model * r.ust_oran - 1, (1 - p_model) * r.alt_oran - 1
+        ev_u = p_model * r.ust_oran - 1
+        ev_a = (1 - p_model) * r.alt_oran - 1 if alt_var else np.nan
         satirlar.append({"Maç": f"{r.ev} – {r.dep}", "baslangic": r.baslangic, "Oyuncu": r.db_oyuncu,
                          "Takım": r.takim, "Rakip": r.rakip, "Rol": rol, "stat": r.stat,
                          "İstatistik": STATLAR[r.stat][0], "Barem": r.cizgi, "Üst oran": r.ust_oran,
@@ -693,7 +724,7 @@ def deger_tablosu(props, kutu, n=10, savunma_agirlik=0.5):
     d = pd.DataFrame(satirlar)
     if d.empty:
         return d
-    d["Öneri"] = np.where(d["EV Üst"] > d["EV Alt"], "Üst", "Alt")
+    d["Öneri"] = np.where(d["EV Üst"].fillna(-np.inf) >= d["EV Alt"].fillna(-np.inf), "Üst", "Alt")
     d["En iyi EV"] = d[["EV Üst", "EV Alt"]].max(axis=1)
     return d.sort_values("En iyi EV", ascending=False)
 
@@ -765,6 +796,8 @@ def barem_tarayici(props, kutu, n=10, savunma_agirlik=0.5):
             if rakip_id is not None else pd.Series(dtype=float)
         for yon in ("Üst", "Alt"):
             ust = yon == "Üst"
+            if not ust and pd.isna(r["Alt oran"]):
+                continue  # eşik pazarı ("10+ sayı"): yalnızca Üst satılıyor
 
             def oran(s):
                 return float(((s > r["Barem"]) if ust else (s < r["Barem"])).mean()) if len(s) else np.nan

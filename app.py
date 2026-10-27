@@ -1,7 +1,7 @@
 """
 Futbol ve basketbol istatistik / barem arayüzü.
 Çalıştırma:  streamlit run app.py
-Her sayfanın üstünde spor menüsü: ⚽ Futbol (Barem Tarayıcı, Maç İstatistikleri, Maç Analizi) · 🏀 Basketbol · ⛹️ NBA · 🏐 Voleybol
+Her sayfanın üstünde spor menüsü: ⚽ Futbol (Barem Tarayıcı, Maç İstatistikleri, Maç Analizi) · 🏀 Basketbol · ⛹️ NBA · 🇪🇺 EuroLeague · 🏐 Voleybol
 """
 import streamlit as st
 
@@ -23,7 +23,7 @@ def _degisen_modulleri_yenile():
     zamanlar = _modul_zamanlari()
     for ad, modul in list(sys.modules.items()):
         dosya = getattr(modul, "__file__", None)
-        if not dosya or ad == "__main__" or Path(dosya).resolve().parent != klasor:
+        if not dosya or ad == "__main__" or ad.startswith("lig_") or Path(dosya).resolve().parent != klasor:
             continue
         try:
             z = Path(dosya).stat().st_mtime
@@ -51,18 +51,22 @@ BASKETBOL = [
 NBA = [
     st.Page("nba_sayfa.py", title="NBA", icon="⛹️"),
 ]
+EUROLEAGUE = [
+    st.Page("euroleague_sayfa.py", title="EuroLeague", icon="🇪🇺"),
+]
 VOLEYBOL = [
     st.Page("voleybol_sayfa.py", title="Voleybol", icon="🏐"),
 ]
-SPORLAR = {"⚽ Futbol": FUTBOL, "🏀 Basketbol": BASKETBOL, "⛹️ NBA": NBA, "🏐 Voleybol": VOLEYBOL}
+SPORLAR = {"⚽ Futbol": FUTBOL, "🏀 Basketbol": BASKETBOL, "⛹️ NBA": NBA, "🇪🇺 EuroLeague": EUROLEAGUE,
+           "🏐 Voleybol": VOLEYBOL}
 
 # Streamlit'in kendi menüsü gizli; menüyü aşağıda biz çiziyoruz (her sürümde aynı görünsün)
-sayfa = st.navigation(FUTBOL + BASKETBOL + NBA + VOLEYBOL, position="hidden")
+sayfa = st.navigation(FUTBOL + BASKETBOL + NBA + EUROLEAGUE + VOLEYBOL, position="hidden")
 aktif_spor = next(ad for ad, liste in SPORLAR.items() if sayfa.url_path in {p.url_path for p in liste})
 
 menu = st.container()
 with menu:
-    sol, sag = st.columns([2.5, 4], vertical_alignment="center")
+    sol, sag = st.columns([3.2, 4], vertical_alignment="center")
     secilen = sol.segmented_control("Spor", list(SPORLAR), default=aktif_spor, key=f"spor_menu_{aktif_spor}",
                                     label_visibility="collapsed")
     if secilen and secilen != aktif_spor:

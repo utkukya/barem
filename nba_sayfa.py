@@ -1,4 +1,4 @@
-"""NBA: oyuncu istatistikleri, pozisyon eşleşmesi (hücum × savunma) ve pozisyona göre takım sıralamaları."""
+"""NBA / EuroLeague: oyuncu istatistikleri, pozisyon eşleşmesi (hücum × savunma) ve pozisyona göre takım sıralamaları."""
 import html as _html
 import sqlite3
 from datetime import datetime
@@ -8,7 +8,14 @@ import numpy as np
 import pandas as pd
 import streamlit as st
 
-import nba
+import ligler
+
+# Bu sayfa hem NBA hem EuroLeague için kullanılır: euroleague_sayfa.py LIG_ADI'yı verip bu dosyayı çalıştırır.
+LIG_ADI = globals().get("LIG_ADI", "nba")
+nba = ligler.modul(LIG_ADI)
+ON = "nba" if LIG_ADI == "nba" else LIG_ADI[:2]   # bileşen anahtarlarının ön eki (sayfalar birbirini etkilemesin)
+LIG = nba.BASLIK
+SEZON = f"{nba.BASLIK} {nba.SEZON_ADI}"
 
 EV_RENK, DEP_RENK = "#e23b4e", "#f2c200"
 ISABET, ISKA, CIZGI = "#1baf7a", "#c3c2b7", "#eb6834"
@@ -33,10 +40,10 @@ def damga_al():
                 pass
     except sqlite3.Error:
         return ""
-    return f"{n}|{m}|{b[0] if b else ''}" if n else ""
+    return f"{LIG_ADI}|{n}|{m}|{b[0] if b else ''}" if n else ""
 
 
-@st.cache_data(show_spinner="NBA verisi hazırlanıyor…")
+@st.cache_data(show_spinner="Lig verisi hazırlanıyor…")
 def veri(damga):
     return nba.verileri_yukle()
 
@@ -50,29 +57,29 @@ def poz_tablosu(damga, stat, n):
 # ---------------- Başlık ve güncelleme ----------------
 ust_sol, ust_sag = st.columns([4, 1], vertical_alignment="bottom")
 with ust_sol:
-    st.title("NBA")
+    st.title(LIG)
 with ust_sag:
     from ortam import KAPALI_YARDIM, guncelleme_acik
-    pencere = st.popover("NBA verisini güncelle", icon="🔄", width="stretch", disabled=not guncelleme_acik(),
+    pencere = st.popover(f"{LIG} verisini güncelle", icon="🔄", width="stretch", disabled=not guncelleme_acik(),
                          help=None if guncelleme_acik() else KAPALI_YARDIM)
 with pencere:
     st.caption("Kaynak Maçkolik: yeni maçların kutu skorları (maç başına 1 istek), takım kadroları ve pozisyonlar "
                "(3 günde bir, takım başına 1 istek). Daha önce çekilen maçlar tekrar indirilmez.")
     bulten_gun = st.segmented_control("iddaa bülteni", [0, 1, 2], default=1,
-                                      format_func={0: "Bugün", 1: "24 saat", 2: "2 gün"}.get, key="nba_gun")
-    hazirlik = st.checkbox("Hazırlık maçlarını da al", False, key="nba_hazirlik",
-                           help=f"{nba.SEZON_BASLANGIC} öncesi NBA maçları (hazırlık) varsayılan olarak alınmaz.")
-    kadro_zorla = st.checkbox("Kadroları şimdi yenile", False, key="nba_kadro")
-    prop_al = st.checkbox("Oyuncu baremlerini global piyasadan çek", True, key="nba_prop_al",
+                                      format_func={0: "Bugün", 1: "24 saat", 2: "2 gün"}.get, key=ON + "_gun")
+    hazirlik = st.checkbox("Hazırlık maçlarını da al", False, key=ON + "_hazirlik",
+                           help=f"{nba.SEZON_BASLANGIC} öncesi {LIG} maçları (hazırlık) varsayılan olarak alınmaz.")
+    kadro_zorla = st.checkbox("Kadroları şimdi yenile", False, key=ON + "_kadro")
+    prop_al = st.checkbox("Oyuncu baremlerini global piyasadan çek", True, key=ON + "_prop_al",
                           help="Oynanacak maçlarda oyuncuların sayı, ribaund, asist, 3 sayılık... Alt/Üst çizgileri ve "
                                "oranları; Kambi'nin (Unibet altyapısı) ücretsiz oran servisinden. Maç başına 1 istek.")
-    if st.button("Güncellemeyi başlat", type="primary", width="stretch", key="nba_basla"):
-        st.session_state["nba_guncelleme"] = {"gun": 1 if bulten_gun is None else bulten_gun,
+    if st.button("Güncellemeyi başlat", type="primary", width="stretch", key=ON + "_basla"):
+        st.session_state[ON + "_guncelleme"] = {"gun": 1 if bulten_gun is None else bulten_gun,
                                               "hazirlik": hazirlik, "kadro": kadro_zorla, "prop": prop_al}
 
-if "nba_guncelleme" in st.session_state:
-    g = st.session_state.pop("nba_guncelleme")
-    with st.status("NBA verisi güncelleniyor…", expanded=True) as durum:
+if ON + "_guncelleme" in st.session_state:
+    g = st.session_state.pop(ON + "_guncelleme")
+    with st.status(f"{LIG} verisi güncelleniyor…", expanded=True) as durum:
         kutu_, cubuk, satirlar = st.empty(), st.progress(0.0), []
 
         def yaz(m):
@@ -95,15 +102,15 @@ if "nba_guncelleme" in st.session_state:
                     yaz(f"Oyuncu baremleri alınamadı: {e}")
             yaz("Tablolar hazırlanıyor…")
             import hazir
-            hazir.hepsini_hazirla(yazdir=yaz, sporlar=("nba",))
-            durum.update(label="NBA verisi güncellendi", state="complete", expanded=False)
+            hazir.hepsini_hazirla(yazdir=yaz, sporlar=(LIG_ADI,))
+            durum.update(label=f"{LIG} verisi güncellendi", state="complete", expanded=False)
         except Exception as e:
             durum.update(label=f"Güncellenemedi: {e}", state="error")
     st.cache_data.clear()
 
 damga = damga_al()
 if not damga:
-    st.info("Henüz NBA verisi yok. Sağ üstteki **NBA verisini güncelle** penceresinden başlatın "
+    st.info(f"Henüz {LIG} verisi yok. Sağ üstteki **{LIG} verisini güncelle** penceresinden başlatın "
             "(ilk seferde sezonun tüm maçlarının kutu skorları ve 30 takımın kadrosu çekilir).")
     st.stop()
 
@@ -112,10 +119,10 @@ maclar, kutu, kadro, bulten = veri(damga)
 with st.sidebar:
     st.header("Filtreler")
     donem_ad = {0: "Tüm sezon", 5: "Son 5 maç", 10: "Son 10 maç", 15: "Son 15 maç"}
-    donem = st.segmented_control("Dönem", list(donem_ad), default=0, format_func=donem_ad.get, key="nba_donem")
+    donem = st.segmented_control("Dönem", list(donem_ad), default=0, format_func=donem_ad.get, key=ON + "_donem")
     n = (donem or None)
     stat = st.selectbox("Pozisyon tabloları için istatistik", ["sayi", "rib", "ast", "uc_i", "pra"],
-                        format_func=lambda k: nba.STATLAR[k][0], key="nba_stat")
+                        format_func=lambda k: nba.STATLAR[k][0], key=ON + "_stat")
     st.caption(f"{kutu['mac_id'].nunique()} maç · {kutu['oyuncu_id'].nunique()} oyuncu · "
                f"son maç {kutu['tarih'].max():%d.%m.%Y}")
     tahmini = kutu.loc[kutu["poz_tahmini"], "oyuncu"].nunique()
@@ -134,7 +141,7 @@ sekme_tarama, sekme_kart, sekme_deger, sekme_eslesme, sekme_sira, sekme_oyuncu =
 def deger(damga, n, agirlik):
     import hazir
     _, kutu_, _, _ = veri(damga)
-    return hazir.nba_deger(kutu_, n or 10, agirlik)
+    return hazir.nba_deger(kutu_, n or 10, agirlik, lig=LIG_ADI)
 
 
 # ================================================================ yardımcılar
@@ -272,24 +279,24 @@ with sekme_eslesme:
         b = b.dropna(subset=["ev_ad", "dep_ad"])
         secenekler = [(r.ev_ad, r.dep_ad, r) for r in b.itertuples()]
     kaynak = st.segmented_control("Maç", ["iddaa bülteni", "Elle seç"],
-                                  default="iddaa bülteni" if secenekler else "Elle seç", key="nba_kaynak")
+                                  default="iddaa bülteni" if secenekler else "Elle seç", key=ON + "_kaynak")
     bilgi = None
     if kaynak == "iddaa bülteni" and secenekler:
-        i = st.selectbox("iddaa'daki NBA maçları", range(len(secenekler)), key="nba_mac",
+        i = st.selectbox(f"iddaa'daki {LIG} maçları", range(len(secenekler)), key=ON + "_mac",
                          format_func=lambda i: f"{secenekler[i][2].tarih[5:]:s}  {secenekler[i][0]} – "
                                                f"{secenekler[i][1]}")
         ev, dep, bilgi = secenekler[i]
     else:
         if kaynak == "iddaa bülteni":
-            st.caption("iddaa bülteninde NBA maçı yok; takımları elle seçin.")
+            st.caption(f"iddaa bülteninde {LIG} maçı yok; takımları elle seçin.")
         c1, c2 = st.columns(2)
-        ev = c1.selectbox("Ev sahibi", takimlar, key="nba_ev")
-        dep = c2.selectbox("Deplasman", [t for t in takimlar if t != ev], key="nba_dep")
+        ev = c1.selectbox("Ev sahibi", takimlar, key=ON + "_ev")
+        dep = c2.selectbox("Deplasman", [t for t in takimlar if t != ev], key=ON + "_dep")
     if ev not in pt.index or dep not in pt.index:
         st.warning("Bu takımların kutu skor verisi henüz yok.")
     else:
         tarih = bilgi.tarih if bilgi is not None else datetime.now().strftime("%Y-%m-%d %H:%M")
-        st.html(eslesme_karti(ev, dep, f"NBA 2026-27 · {datetime.fromisoformat(tarih):%d.%m.%Y %H:%M}"))
+        st.html(eslesme_karti(ev, dep, f"{SEZON} · {datetime.fromisoformat(tarih):%d.%m.%Y %H:%M}"))
 
         # Maç bilgisi: iddaa çizgileri ve son maç ortalamaları
         tm = nba.takim_maclari(kutu)
@@ -339,9 +346,9 @@ with sekme_eslesme:
 with sekme_sira:
     taraf = st.segmented_control("Tablo", ["hucum", "savunma"], default="hucum",
                                  format_func={"hucum": "Hücum (üretilen)", "savunma": "Savunma (yenen)"}.get,
-                                 key="nba_taraf") or "hucum"
+                                 key=ON + "_taraf") or "hucum"
     goster = st.segmented_control("Hücrelerde", ["sira", "deger"], default="sira",
-                                  format_func={"sira": "Sıra", "deger": "Maç başı değer"}.get, key="nba_goster")
+                                  format_func={"sira": "Sıra", "deger": "Maç başı değer"}.get, key=ON + "_goster")
     sira_k = f"{taraf}_sira"
     t = pt.sort_values((sira_k, "Toplam"))
     toplam = len(t)
@@ -378,10 +385,10 @@ with sekme_sira:
     .nba-sira td.son {{border-left:6px solid #f1f0eb}}
     .nba-sira .alt {{display:flex;justify-content:space-between;font-size:11px;color:#7a828a;margin-top:10px}}
     .nba-sira .lej {{display:inline-block;width:150px;height:9px;vertical-align:middle;margin:0 6px;
-      background:linear-gradient(90deg,{sira_renk(1)},{sira_renk(15.5)},{sira_renk(30)})}}
+      background:linear-gradient(90deg,{sira_renk(1, toplam)},{sira_renk((toplam + 1) / 2, toplam)},{sira_renk(toplam, toplam)})}}
     </style>
     <div class="nba-sira">
-      <div class="ust">NBA 2026-27 · {e(donem_ad[donem or 0])} · pozisyon sıralaması</div>
+      <div class="ust">{e(SEZON)} · {e(donem_ad[donem or 0])} · pozisyon sıralaması</div>
       <h2>{e(baslik.split(' ')[0])} <span>{e(' '.join(baslik.split(' ')[1:]))}</span></h2>
       <div class="acik"><div>{e(alt_yazi)}</div><div class="sag">{e(aciklama)}<br>Sıralama: maç başı toplama göre</div></div>
       <table><tr><th class="sol">TAKIM · TOPLAM</th><th></th>{''.join(f'<th>{p}</th>' for p in nba.POZLAR)}<th>TOPLAM</th></tr>
@@ -396,10 +403,10 @@ with sekme_sira:
 with sekme_oyuncu:
     oz = nba.oyuncu_ozeti(kutu, n)
     f1, f2, f3, f4 = st.columns([2, 2, 1.2, 2])
-    tk = f1.multiselect("Takım", sorted(oz["takim"].dropna().unique()), key="nba_o_takim", placeholder="Tümü")
-    pz = f2.multiselect("Pozisyon (kadro)", nba.POZLAR, key="nba_o_poz", placeholder="Tümü")
-    en_az = f3.number_input("En az maç", 1, 82, 2, key="nba_o_mac")
-    ara = f4.text_input("Oyuncu ara", key="nba_o_ara")
+    tk = f1.multiselect("Takım", sorted(oz["takim"].dropna().unique()), key=ON + "_o_takim", placeholder="Tümü")
+    pz = f2.multiselect("Pozisyon (kadro)", nba.POZLAR, key=ON + "_o_poz", placeholder="Tümü")
+    en_az = f3.number_input("En az maç", 1, 82, 2, key=ON + "_o_mac")
+    ara = f4.text_input("Oyuncu ara", key=ON + "_o_ara")
     g = oz[oz["Maç"] >= en_az]
     if tk:
         g = g[g["takim"].isin(tk)]
@@ -411,11 +418,11 @@ with sekme_oyuncu:
         ["Oyuncu", "Takım", "Poz", "Maç", "İlk 5", "Dk", "Sayı", "Rib", "Ast", "SRA", "3S", "3SD", "TÇ", "Blok", "TK",
          "SG%", "2S%", "3S%", "SA%"]]
     from ortam import sayfala
-    gor = sayfala(gor, "nba_o")
+    gor = sayfala(gor, ON + "_o")
     fmt = {k: "{:.1f}" for k in ["Dk", "Sayı", "Rib", "Ast", "SRA", "3S", "3SD", "TÇ", "Blok", "TK"]}
     fmt.update({k: "{:.0%}" for k in ["SG%", "2S%", "3S%", "SA%"]})
     secim = st.dataframe(gor.style.format(fmt, na_rep="–"), hide_index=True, width="stretch", height=430,
-                         on_select="rerun", selection_mode="single-row", key="nba_o_tablo",
+                         on_select="rerun", selection_mode="single-row", key=ON + "_o_tablo",
                          column_config={"SRA": st.column_config.Column(help="Sayı + Ribaund + Asist"),
                                         "3SD": st.column_config.Column(help="3 sayılık deneme"),
                                         "SG%": st.column_config.Column(help="Saha içi isabet (2 + 3 sayılık)"),
@@ -431,14 +438,14 @@ with sekme_oyuncu:
             log = log.tail(n)
         st.markdown(f"### {r['oyuncu']} · {r['takim']} · {r['poz_ad']}")
         c1, c2, c3 = st.columns([1.4, 1, 1])
-        s_k = c1.selectbox("İstatistik", list(nba.STATLAR), format_func=lambda k: nba.STATLAR[k][0], key="nba_o_stat")
+        s_k = c1.selectbox("İstatistik", list(nba.STATLAR), format_func=lambda k: nba.STATLAR[k][0], key=ON + "_o_stat")
         ort = log[s_k].mean()
         piyasa = nba.props_esle(nba.props_yukle(), kutu)
         piyasa = piyasa[(piyasa["oyuncu_id"] == oid) & (piyasa["stat"] == s_k)] if len(piyasa) else piyasa
         varsayilan = (float(piyasa["cizgi"].iloc[0]) if len(piyasa)
                       else float(np.floor(ort) + 0.5) if pd.notna(ort) else 10.5)
         cizgi = c2.number_input("Barem" + (" (piyasa)" if len(piyasa) else ""), value=varsayilan, step=1.0,
-                                key=f"nba_o_cizgi_{oid}_{s_k}")
+                                key=f"{ON}_o_cizgi_{oid}_{s_k}")
         oran = nba.barem_isabeti(log[s_k], cizgi)
         c3.metric(f"Üst {cizgi:g} isabeti", "–" if pd.isna(oran) else f"%{100 * oran:.0f}",
                   f"{int((log[s_k] > cizgi).sum())}/{len(log)} maç", delta_color="off")
@@ -469,26 +476,26 @@ with sekme_oyuncu:
 with sekme_deger:
     props = nba.props_yukle()
     if props.empty:
-        st.info("Henüz oyuncu baremi yok. **NBA verisini güncelle** penceresinde 'Oyuncu baremlerini global piyasadan "
+        st.info(f"Henüz oyuncu baremi yok. **{LIG} verisini güncelle** penceresinde 'Oyuncu baremlerini global piyasadan "
                 "çek' seçiliyken güncellemeyi başlatın.")
     else:
         c1, c2, c3, c4 = st.columns([1.2, 1.4, 1.6, 1.2])
-        n_d = c1.selectbox("Kaç maça bakılsın", [5, 10, 15, 20], index=1, key="nba_d_n")
-        agirlik = c2.slider("Rakip savunması etkisi", 0.0, 1.0, 0.5, 0.1, key="nba_d_agirlik",
+        n_d = c1.selectbox("Kaç maça bakılsın", [5, 10, 15, 20], index=1, key=ON + "_d_n")
+        agirlik = c2.slider("Rakip savunması etkisi", 0.0, 1.0, 0.5, 0.1, key=ON + "_d_agirlik",
                             help="0: yalnızca oyuncunun kendi ortalaması. 1: rakibin, oyuncunun rolüne karşı lig "
                                  "ortalamasından ne kadar fazla/az yedirdiği tam olarak yansıtılır.")
-        esik = c3.slider("Değerli sayılacak en az beklenen getiri", 0.0, 0.30, 0.08, 0.01, key="nba_d_esik",
+        esik = c3.slider("Değerli sayılacak en az beklenen getiri", 0.0, 0.30, 0.08, 0.01, key=ON + "_d_esik",
                          format="%.2f")
-        yalniz = c4.toggle("Yalnızca değerliler", True, key="nba_d_yalniz")
+        yalniz = c4.toggle("Yalnızca değerliler", True, key=ON + "_d_yalniz")
         d = deger(damga, n_d, agirlik)
         if d.empty:
             st.warning("Baremlerdeki oyuncular veritabanındaki oyuncularla eşleşmedi (kutu skor verisi eksik olabilir).")
         else:
             f1, f2, f3 = st.columns(3)
-            mac_sec = f1.multiselect("Maç", sorted(d["Maç"].unique()), key="nba_d_mac", placeholder="Tümü")
-            stat_sec = f2.multiselect("İstatistik", sorted(d["İstatistik"].unique()), key="nba_d_stat",
+            mac_sec = f1.multiselect("Maç", sorted(d["Maç"].unique()), key=ON + "_d_mac", placeholder="Tümü")
+            stat_sec = f2.multiselect("İstatistik", sorted(d["İstatistik"].unique()), key=ON + "_d_stat",
                                       placeholder="Tümü")
-            en_az_mac = f3.number_input("Oyuncunun en az maç sayısı", 1, 20, 4, key="nba_d_enaz")
+            en_az_mac = f3.number_input("Oyuncunun en az maç sayısı", 1, 20, 4, key=ON + "_d_enaz")
             g = d[d["Maç sayısı"] >= en_az_mac]
             if mac_sec:
                 g = g[g["Maç"].isin(mac_sec)]
@@ -571,10 +578,10 @@ with sekme_kart:
     sirali = son_bilgi.assign(dk=dk_ort, oyn=son_bilgi["takim_id"].isin(oynayacak)) \
         .sort_values(["oyn", "dk"], ascending=False)
     ust1, ust2 = st.columns([2.2, 3])
-    oid = ust1.selectbox("Oyuncu", list(sirali.index), key="nba_k_oyuncu",
+    oid = ust1.selectbox("Oyuncu", list(sirali.index), key=ON + "_k_oyuncu",
                          format_func=lambda o: f"{sirali.loc[o, 'oyuncu']} · {sirali.loc[o, 'takim']}"
                                                + ("  🗓" if sirali.loc[o, "oyn"] else ""))
-    stat_k = ust2.segmented_control("İstatistik", KART_STATLAR, default="sayi", key="nba_k_stat",
+    stat_k = ust2.segmented_control("İstatistik", KART_STATLAR, default="sayi", key=ON + "_k_stat",
                                     format_func=lambda k: nba.STATLAR[k][0]) or "sayi"
     oy = son_bilgi.loc[oid]
     log_tum = kutu[kutu["oyuncu_id"] == oid].sort_values("ts")
@@ -582,7 +589,7 @@ with sekme_kart:
     rakip_bilgi = nba.sonraki_rakip(oy["takim_id"], bulten, pe)
     if rakip_bilgi is None:
         rakip_id = st.selectbox("Rakip (bültende maçı bulunamadı)", [t for t in ad_harita if t != oy["takim_id"]],
-                                format_func=ad_harita.get, key="nba_k_rakip")
+                                format_func=ad_harita.get, key=ON + "_k_rakip")
         saha_s, tarih_s = None, ""
     else:
         rakip_id, saha_s, tarih_s = rakip_bilgi
@@ -594,7 +601,7 @@ with sekme_kart:
     varsayilan = float(piyasa["cizgi"].iloc[0]) if len(piyasa) else float(np.floor(ort10) + 0.5)
     k1, k2, _ = st.columns([1, 1.4, 3])
     cizgi = k1.number_input("Barem" + (" (piyasa)" if len(piyasa) else ""), value=varsayilan, step=1.0,
-                            key=f"nba_k_cizgi_{oid}_{stat_k}")
+                            key=f"{ON}_k_cizgi_{oid}_{stat_k}")
     if len(piyasa):
         k2.markdown(f"<div style='padding-top:30px;font-size:14px'>Üst <b>{piyasa['ust_oran'].iloc[0]:.2f}</b> · "
                     f"Alt <b>{piyasa['alt_oran'].iloc[0]:.2f}</b></div>", unsafe_allow_html=True)
@@ -773,7 +780,7 @@ with sekme_kart:
 def tarama(damga, n):
     import hazir
     _, kutu_, _, _ = veri(damga)
-    return hazir.nba_tarama(kutu_, n)
+    return hazir.nba_tarama(kutu_, n, lig=LIG_ADI)
 
 
 TARAMA_STAT = ["sayi", "rib", "ast", "uc_i", "pra", "pr", "pa", "ra", "tc", "blok", "tk"]
@@ -785,27 +792,27 @@ def yuzde_n(v, k):
 
 with sekme_tarama:
     if nba.props_yukle().empty:
-        st.info("Henüz oyuncu baremi yok. **NBA verisini güncelle** penceresinde 'Oyuncu baremlerini global piyasadan "
+        st.info(f"Henüz oyuncu baremi yok. **{LIG} verisini güncelle** penceresinde 'Oyuncu baremlerini global piyasadan "
                 "çek' seçiliyken güncellemeyi başlatın.")
     else:
         a1, a2, a3, a4 = st.columns([1, 1.3, 1.5, 1.2])
-        n_t = a1.selectbox("Kaç maça bakılsın", [5, 10, 15, 20], index=1, key="nba_t_n")
+        n_t = a1.selectbox("Kaç maça bakılsın", [5, 10, 15, 20], index=1, key=ON + "_t_n")
         yon_t = a2.segmented_control("Taraf", ["Üst", "Alt"], selection_mode="multi", default=["Üst", "Alt"],
-                                     key="nba_t_yon") or ["Üst", "Alt"]
-        oran_t = a3.slider("Oran", 1.0, 6.0, (1.3, 6.0), 0.05, key="nba_t_oran")
-        form_t = a4.slider("En az form", 0, 100, 60, 5, key="nba_t_form", format="%d%%")
+                                     key=ON + "_t_yon") or ["Üst", "Alt"]
+        oran_t = a3.slider("Oran", 1.0, 6.0, (1.3, 6.0), 0.05, key=ON + "_t_oran")
+        form_t = a4.slider("En az form", 0, 100, 60, 5, key=ON + "_t_form", format="%d%%")
         t = tarama(damga, n_t)
         if t.empty:
             st.warning("Baremlerdeki oyuncular veritabanındaki oyuncularla eşleşmedi.")
         else:
             mevcut = [k for k in TARAMA_STAT if k in set(t["stat"])]
-            stat_t = st.pills("İstatistik", mevcut, selection_mode="multi", default=mevcut, key="nba_t_stat",
+            stat_t = st.pills("İstatistik", mevcut, selection_mode="multi", default=mevcut, key=ON + "_t_stat",
                               format_func=lambda k: nba.STATLAR[k][0]) or mevcut
             b1, b2, b3 = st.columns([2, 2, 1])
-            mac_t = b1.multiselect("Maç", sorted(t["Maç"].unique()), key="nba_t_mac", placeholder="Tüm maçlar")
-            tk_t = b2.multiselect("Takım", sorted(t["Takım"].dropna().unique()), key="nba_t_takim",
+            mac_t = b1.multiselect("Maç", sorted(t["Maç"].unique()), key=ON + "_t_mac", placeholder="Tüm maçlar")
+            tk_t = b2.multiselect("Takım", sorted(t["Takım"].dropna().unique()), key=ON + "_t_takim",
                                   placeholder="Tüm takımlar")
-            en_az_t = b3.number_input("En az maç", 1, 20, 2, key="nba_t_enaz")
+            en_az_t = b3.number_input("En az maç", 1, 20, 2, key=ON + "_t_enaz")
             g = t[t["stat"].isin(stat_t) & t["Yön"].isin(yon_t) & t["Oran"].between(*oran_t)
                   & (t["Form"].fillna(0) >= form_t / 100) & (t["Maç sayısı"] >= en_az_t)]
             if mac_t:
@@ -817,7 +824,7 @@ with sekme_tarama:
                        "tarafı tutturma oranı (parantez: maç sayısı). Rakip izin: rakibin aynı roldeki ilk 5 "
                        f"oyuncularına son {n_t} maçta bu tarafı yaşattığı maç oranı.")
             from ortam import sayfala
-            g = sayfala(g, "nba_t").reset_index(drop=True)
+            g = sayfala(g, ON + "_t").reset_index(drop=True)
             saat = pd.to_datetime(g["baslangic"], utc=True, errors="coerce").dt.tz_convert("Europe/Istanbul")
             gor = pd.DataFrame({
                 "Oyuncu": g["Oyuncu"], "Takım": g["Takım"], "Rakip": g["Rakip"],
@@ -857,7 +864,7 @@ with sekme_tarama:
             secim_t = st.dataframe(
                 gor.style.format({"Ort.": "{:.1f}", "Rakip izin ort.": "{:.1f}"}, na_rep="–").apply(renkler_t, axis=None),
                 hide_index=True, width="stretch", height=min(36 * (len(gor) + 1) + 4, 640),
-                on_select="rerun", selection_mode="single-row", key="nba_t_tablo",
+                on_select="rerun", selection_mode="single-row", key=ON + "_t_tablo",
                 column_config={
                     "Oran": st.column_config.TextColumn(help="Kambi (Unibet) oranı"),
                     "Sezon": st.column_config.TextColumn(help="Bu sezonun tüm maçlarında bu tarafı tutturma oranı"),

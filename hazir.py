@@ -186,34 +186,39 @@ def basket_tablolar(n=VARSAYILAN_N):
     return bt, mt
 
 
-# ---------------------------------------------------------------- NBA
-def nba_damga():
-    import nba
-    if not nba.DB.exists():
+# ---------------------------------------------------------------- NBA / EuroLeague
+def _lig(lig):
+    import ligler
+    return ligler.modul(lig)
+
+
+def nba_damga(lig="nba"):
+    m = _lig(lig)
+    if not m.DB.exists():
         return ""
-    k = _sorgu(nba.DB, "SELECT COUNT(*), COUNT(DISTINCT mac_id) FROM nba_kutu")
-    b = _sorgu(nba.DB, "SELECT deger FROM nba_meta WHERE anahtar = 'bulten'")
-    p = _sorgu(nba.DB, "SELECT MAX(cekilme), COUNT(*) FROM nba_prop")
+    k = _sorgu(m.DB, "SELECT COUNT(*), COUNT(DISTINCT mac_id) FROM nba_kutu")
+    b = _sorgu(m.DB, "SELECT deger FROM nba_meta WHERE anahtar = 'bulten'")
+    p = _sorgu(m.DB, "SELECT MAX(cekilme), COUNT(*) FROM nba_prop")
     if not k or not k[0]:
         return ""
     return (f"{k[0]}|{k[1]}|{b[0] if b else ''}|{p[0] if p else ''}|{p[1] if p else ''}|"
-            f"{kod_surumu('nba.py', 'mackolik.py')}")
+            f"{kod_surumu('nba.py', 'ligler.py', 'mackolik.py')}")
 
 
-def nba_tarama(kutu, n=VARSAYILAN_N, agirlik=0.5):
-    import nba
-    return al(nba.DB, f"nba_tarama|n={n}|a={agirlik}", nba_damga(),
-              lambda: nba.barem_tarayici(nba.props_yukle(), kutu, n, agirlik))
+def nba_tarama(kutu, n=VARSAYILAN_N, agirlik=0.5, lig="nba"):
+    m = _lig(lig)
+    return al(m.DB, f"nba_tarama|n={n}|a={agirlik}", nba_damga(lig),
+              lambda: m.barem_tarayici(m.props_yukle(), kutu, n, agirlik))
 
 
-def nba_deger(kutu, n=VARSAYILAN_N, agirlik=0.5):
-    import nba
-    return al(nba.DB, f"nba_deger|n={n}|a={agirlik}", nba_damga(),
-              lambda: nba.deger_tablosu(nba.props_yukle(), kutu, n, agirlik))
+def nba_deger(kutu, n=VARSAYILAN_N, agirlik=0.5, lig="nba"):
+    m = _lig(lig)
+    return al(m.DB, f"nba_deger|n={n}|a={agirlik}", nba_damga(lig),
+              lambda: m.deger_tablosu(m.props_yukle(), kutu, n, agirlik))
 
 
 # ---------------------------------------------------------------- hepsi
-def hepsini_hazirla(yazdir=print, sporlar=("futbol", "basketbol", "nba")):
+def hepsini_hazirla(yazdir=print, sporlar=("futbol", "basketbol", "nba", "euroleague")):
     """Varsayılan ayarlarla (son 10 maç) tüm ağır tabloları hesaplayıp veritabanlarına yazar."""
     import time
     for spor in sporlar:
@@ -230,16 +235,17 @@ def hepsini_hazirla(yazdir=print, sporlar=("futbol", "basketbol", "nba")):
                     continue
                 bt, mt = basket_tablolar()
                 yazdir(f"Basketbol: {len(bt)} barem satırı, {len(mt)} maç hazır ({time.time() - t0:.0f} sn).")
-            elif spor == "nba":
-                if not nba_damga():
+            elif spor in ("nba", "euroleague"):
+                if not nba_damga(spor):
                     continue
-                import nba
-                v = nba.verileri_yukle()
+                m = _lig(spor)
+                v = m.verileri_yukle()
                 if v is None or v[1].empty:
                     continue
-                t = nba_tarama(v[1])
-                d = nba_deger(v[1])
-                yazdir(f"NBA: {len(t)} barem satırı, {len(d)} değer satırı hazır ({time.time() - t0:.0f} sn).")
+                t = nba_tarama(v[1], lig=spor)
+                d = nba_deger(v[1], lig=spor)
+                yazdir(f"{m.BASLIK}: {len(t)} barem satırı, {len(d)} değer satırı hazır "
+                       f"({time.time() - t0:.0f} sn).")
         except Exception as hata:
             yazdir(f"{spor}: hazır tablo oluşturulamadı ({hata}).")
 
