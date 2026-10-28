@@ -19,6 +19,15 @@ ARALIK = 1.5
 
 _kilit = threading.Lock()
 _durum = {"son": 0.0, "engel": False, "istek": 0, "imza": None}
+ENGEL_SURE = 20 * 60     # site istekleri reddettiyse bu kadar saniye istek gönderilmez, sonra yeniden denenir
+
+
+def _engelde():
+    t = _durum["engel"]
+    if t and time.monotonic() - t < ENGEL_SURE:
+        return True
+    _durum["engel"] = False
+    return False
 
 
 class FlashscoreEngel(RuntimeError):
@@ -43,7 +52,7 @@ def istek_sayisi():
 
 
 def _get(url, basliklar=None):
-    if _durum["engel"]:
+    if _engelde():
         raise FlashscoreEngel(ENGEL_MESAJI)
     durum = None
     for deneme in range(3):
@@ -65,7 +74,7 @@ def _get(url, basliklar=None):
         if durum == 404:
             return None
         if durum in (401, 403, 429):
-            _durum["engel"] = True
+            _durum["engel"] = time.monotonic()
             raise FlashscoreEngel(ENGEL_MESAJI)
         time.sleep(3 * (deneme + 1))
     raise RuntimeError(f"Flashscore {durum}: {url}")

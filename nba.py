@@ -308,14 +308,14 @@ def bulten_guncelle(gun=1, yazdir=print):
         return 0
     # Yalnızca bu ligin iddaa yarışması (EuroLeague takımlarının yerel lig maçları karışmasın)
     secili = [e for e in secili if not IDDAA_CI or e.get("ci") in IDDAA_CI]
-    try:
-        eslesme = mk.iddaa_eslesme("basketbol", secili, yazdir)
-    except mk.MackolikEngel:
-        yazdir("Maçkolik erişilemiyor: iddaa maçları takım adlarıyla eşleştiriliyor.")
-        eslesme = {}
+    # Önce takım adıyla (istek yok); yalnızca adı tanınmayan maçlar için Maçkolik'in iddaa koduna bakılır
+    eslesme = isimle_esle(secili)
     eksik = [e for e in secili if e["i"] not in eslesme]
-    if eksik:  # Maçkolik'te bulunamayan (ya da Maçkolik'e ulaşılamayan) maçlar: takım adından
-        eslesme.update(isimle_esle(eksik))
+    if eksik:
+        try:
+            eslesme.update(mk.iddaa_eslesme("basketbol", eksik, yazdir))
+        except mk.MackolikEngel:
+            yazdir(f"Maçkolik erişilemiyor: {len(eksik)} maç takım adından eşleştirilemedi.")
     nba = [e for e in secili if e["i"] in eslesme and eslesme[e["i"]]["ev_id"] in nba_takimlari]
     detay = ib._detaylari_cek(nba, yazdir) if nba else {}
     satirlar = []
@@ -515,6 +515,7 @@ def barem_isabeti(seri, cizgi):
 # gerektirmez. Maç listesi 1 istek + maç başına 1 istek. Oranlar ondalık; çizgiler (ör. 24.5) Alt/Üst.
 KAMBI = "https://eu-offering-api.kambicdn.com/offering/v2018/ub"
 KAMBI_PARAM = {"lang": "en_GB", "market": "GB"}
+KAMBI_SAAT = 30  # maç başlangıcına bu kadar saatten fazla varsa oyuncu pazarı istenmez
 PROP_STAT = [  # (anahtar kelime, istatistik) — özelden genele
     (("points, rebounds", "assists"), "pra"), (("points", "rebounds"), "pr"), (("points", "assists"), "pa"),
     (("rebounds", "assists"), "ra"), (("three",), "uc_i"), (("3-point",), "uc_i"), (("3 point",), "uc_i"),
@@ -621,6 +622,20 @@ def baremleri_guncelle(yazdir=print):
     liste = _kambi(KAMBI_LISTE) or {}
     olaylar = [e.get("event") or {} for e in liste.get("events", [])]
     olaylar = [e for e in olaylar if e.get("state") == "NOT_STARTED" and e.get("id")]
+    # Oyuncu pazarları maç gününe yakın açılır: KAMBI_SAAT saatten uzak maçlara istek gönderilmez
+    simdi_utc = datetime.now(timezone.utc)
+
+    def yakin(e):
+        try:
+            bas = datetime.fromisoformat(str(e.get("start")).replace("Z", "+00:00"))
+        except ValueError:
+            return True
+        return (bas - simdi_utc).total_seconds() <= KAMBI_SAAT * 3600
+
+    uzak = [e for e in olaylar if not yakin(e)]
+    olaylar = [e for e in olaylar if yakin(e)]
+    if uzak:
+        yazdir(f"  {len(uzak)} maç {KAMBI_SAAT} saatten uzak; oyuncu pazarları henüz açılmadığı için atlandı.")
     yazdir(f"Global piyasa (Kambi): {len(olaylar)} oynanacak {BASLIK} maçı.")
     satirlar, cekilme = [], datetime.now().strftime("%Y-%m-%d %H:%M")
     for e in olaylar:

@@ -30,6 +30,15 @@ HAZIRLIK = re.compile(r"haz[ıi]rl[ıi]k|friendl", re.I)
 
 _kilit = threading.Lock()
 _durum = {"son": 0.0, "engel": False, "istek": 0}
+ENGEL_SURE = 20 * 60     # site istekleri reddettiyse bu kadar saniye istek gönderilmez, sonra yeniden denenir
+
+
+def _engelde():
+    t = _durum["engel"]
+    if t and time.monotonic() - t < ENGEL_SURE:
+        return True
+    _durum["engel"] = False
+    return False
 
 
 class OfsaytEngel(RuntimeError):
@@ -58,11 +67,11 @@ def istek_sayisi():
 
 
 def engelli_mi():
-    return _durum["engel"]
+    return _engelde()
 
 
 def _get(yol, params=None):
-    if _durum["engel"]:
+    if _engelde():
         raise OfsaytEngel(ENGEL_MESAJI)
     durum = None
     for deneme in range(3):
@@ -82,13 +91,13 @@ def _get(yol, params=None):
         if durum == 200:
             metin = r.text
             if "cf-chl" in metin[:5000] or "Just a moment" in metin[:2000]:
-                _durum["engel"] = True
+                _durum["engel"] = time.monotonic()
                 raise OfsaytEngel(ENGEL_MESAJI)
             return metin
         if durum == 404:
             return None
         if durum in (401, 403, 429, 503):
-            _durum["engel"] = True
+            _durum["engel"] = time.monotonic()
             raise OfsaytEngel(ENGEL_MESAJI)
         time.sleep(3 * (deneme + 1))
     raise RuntimeError(f"Ofsayt {durum}: {yol}")
@@ -161,8 +170,23 @@ def takim_ayristir(metin):
     return sorted({s["mac_id"]: s for s in sonuc}.values(), key=lambda s: s["ts"])
 
 
+def sonraki_mac(metin):
+    """Takım kartındaki oynanmamış ilk maçın başlama zamanı (ts) ya da None."""
+    simdi = time.time()
+    zamanlar = []
+    for _, attr, govde in _TR.findall(metin or ""):
+        if _SKOR.search(govde):
+            continue
+        ts = _ts(dict(_ATTR.findall(attr)).get("date", ""), "%Y-%m-%dT%H:%M")
+        if ts and ts > simdi - 3 * 3600:
+            zamanlar.append(ts)
+    return min(zamanlar) if zamanlar else None
+
+
 def takim_maclari(takim_id):
-    return takim_ayristir(_get(f"/takim/mini/{takim_id}", {"sportType": 1}))
+    """(biten maçlar, sıradaki maçın zamanı)."""
+    metin = _get(f"/takim/mini/{takim_id}", {"sportType": 1})
+    return takim_ayristir(metin), sonraki_mac(metin)
 
 
 # ---------------------------------------------------------------- maç istatistikleri
@@ -228,6 +252,8 @@ def sayisal_id(mac_id):
 
 def _tablolar(con):
     con.execute("CREATE TABLE IF NOT EXISTS ofsayt_takim (takim_id TEXT PRIMARY KEY, takim TEXT, son_cekim TEXT)")
+    if "sonraki_mac" not in [c[1] for c in con.execute("PRAGMA table_info(ofsayt_takim)")]:
+        con.execute("ALTER TABLE ofsayt_takim ADD COLUMN sonraki_mac INTEGER")
     con.execute("CREATE TABLE IF NOT EXISTS ofsayt_istatistik_yok (mac_id TEXT PRIMARY KEY)")
     con.execute("CREATE TABLE IF NOT EXISTS ofsayt_eslesme (iddaa_adi TEXT PRIMARY KEY, takim_id TEXT, takim TEXT)")
 
@@ -277,6 +303,20 @@ def hafizadan_esle(olaylar, eslesme):
             eslesme[e["i"]] = {"sofa_id": None, "ts": e["d"], "ev": ev[1], "dep": dep[1],
                                "ev_id": ev[0], "dep_id": dep[0]}
     return eslesme
+
+
+def gunler(tarihler, yazdir=print):
+    """Verilen günlerin ofsayt maç listeleri (gün başına 1 istek)."""
+    parcalar = []
+    for gun in tarihler:
+        try:
+            parcalar.append(gunluk(gun))
+        except OfsaytEngel:
+            raise
+        except Exception as hata:
+            yazdir(f"  Ofsayt {gun:%d.%m} listesi alınamadı: {hata}")
+    parcalar = [p for p in parcalar if len(p)]
+    return pd.concat(parcalar, ignore_index=True) if parcalar else pd.DataFrame()
 
 
 def takvim(baslangic_ts, bitis_ts, yazdir=print):
@@ -329,7 +369,10 @@ def takimlari_guncelle(takimlar, yazdir=print, ilerleme=None, zorla=False):
             continue
         if not zorla and tid in tablo.index:
             son = pd.to_datetime(tablo.loc[tid, "son_cekim"], errors="coerce")
-            if pd.notna(son) and simdi - son < timedelta(hours=TAZE_SAAT):
+            sonraki = tablo.loc[tid, "sonraki_mac"] if "sonraki_mac" in tablo.columns else None
+            # Son çekimden beri takımın yeni maçı olamaz: sıradaki maçı henüz oynanıp bitmedi (başlama + 3 saat)
+            mac_yok = pd.notna(sonraki) and time.time() < float(sonraki) + 3 * 3600
+            if (pd.notna(son) and simdi - son < timedelta(hours=TAZE_SAAT)) or (pd.notna(son) and mac_yok):
                 adlar[tid] = tablo.loc[tid, "takim"]
                 continue
         yapilacak.append((tid, ad))
@@ -349,7 +392,8 @@ def takimlari_guncelle(takimlar, yazdir=print, ilerleme=None, zorla=False):
 
     for n, (tid, ad) in enumerate(yapilacak, 1):
         try:
-            maclar = takim_maclari(tid)[-SON_N:]
+            maclar, sonraki = takim_maclari(tid)
+            maclar = maclar[-SON_N:]
         except OfsaytEngel:
             yaz()
             raise
@@ -382,8 +426,8 @@ def takimlari_guncelle(takimlar, yazdir=print, ilerleme=None, zorla=False):
         tablo.loc[tid, "takim"] = db_adi
         with sqlite3.connect(DB) as con:
             _tablolar(con)
-            con.execute("INSERT OR REPLACE INTO ofsayt_takim VALUES (?, ?, ?)",
-                        (tid, db_adi, simdi.strftime("%Y-%m-%d %H:%M")))
+            con.execute("INSERT OR REPLACE INTO ofsayt_takim (takim_id, takim, son_cekim, sonraki_mac) "
+                        "VALUES (?, ?, ?, ?)", (tid, db_adi, simdi.strftime("%Y-%m-%d %H:%M"), sonraki))
         if ilerleme:
             ilerleme(n, len(yapilacak))
         if n % 10 == 0 or n == len(yapilacak):

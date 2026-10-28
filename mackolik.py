@@ -24,7 +24,17 @@ TAM_SAYILAN_GUN = 2     # bugünden bu kadar gün önceki ve daha eski günler "
 
 _kilit = threading.Lock()
 _durum = {"son": 0.0, "engel": False, "istek": 0}
-_gun_onbellek = {}      # (spor, tarih) -> veri; tek güncelleme içinde aynı gün iki kez çekilmesin
+ENGEL_SURE = 20 * 60     # site istekleri reddettiyse bu kadar saniye istek gönderilmez, sonra yeniden denenir
+
+
+def _engelde():
+    t = _durum["engel"]
+    if t and time.monotonic() - t < ENGEL_SURE:
+        return True
+    _durum["engel"] = False
+    return False
+_gun_onbellek = {}      # (spor, tarih) -> (zaman, veri): aynı gün, sayfalar arasında da tekrar çekilmesin
+GUN_TAZE_SN = 10 * 60   # bugün ve dünün listesi bu kadar saniye geçerli (skorlar değişir); eski günler kalıcı
 
 
 class MackolikEngel(RuntimeError):
@@ -55,15 +65,18 @@ def istek_sayisi():
 
 
 def engelli_mi():
-    return _durum["engel"]
+    return _engelde()
 
 
 def gun_al(spor, tarih):
     """Bir günün tüm maçları: {"matches": {...}, "competitions": {...}}. tarih: 'YYYY-AA-GG' (Türkiye saati)."""
     k = (spor, tarih)
     if k in _gun_onbellek:
-        return _gun_onbellek[k]
-    if _durum["engel"]:
+        zaman, veri = _gun_onbellek[k]
+        bitti = (datetime.now(TZ).date() - datetime.fromisoformat(tarih).date()).days >= TAM_SAYILAN_GUN
+        if bitti or time.monotonic() - zaman < GUN_TAZE_SN:
+            return veri
+    if _engelde():
         raise MackolikEngel(ENGEL_MESAJI)
     durum = None
     for deneme in range(3):
@@ -84,13 +97,13 @@ def gun_al(spor, tarih):
             try:
                 veri = (r.json() or {}).get("data") or {}
             except ValueError:  # JSON yerine HTML (doğrulama sayfası)
-                _durum["engel"] = True
+                _durum["engel"] = time.monotonic()
                 raise MackolikEngel(ENGEL_MESAJI)
             veri = {"matches": veri.get("matches") or {}, "competitions": veri.get("competitions") or {}}
-            _gun_onbellek[k] = veri
+            _gun_onbellek[k] = (time.monotonic(), veri)
             return veri
         if durum in (403, 429):
-            _durum["engel"] = True
+            _durum["engel"] = time.monotonic()
             raise MackolikEngel(ENGEL_MESAJI)
         time.sleep(3 * (deneme + 1))
     raise RuntimeError(f"Maçkolik {durum}: {spor} {tarih}")
@@ -99,7 +112,7 @@ def gun_al(spor, tarih):
 def sayfa_al(url, params=None, json_mi=False):
     """Maçkolik'ten herhangi bir sayfa/uç nokta (aynı hız sınırı ve engel denetimiyle).
     Bulunamazsa ya da sunucu hatası sürerse None döner."""
-    if _durum["engel"]:
+    if _engelde():
         raise MackolikEngel(ENGEL_MESAJI)
     durum = None
     for deneme in range(2):
@@ -122,10 +135,10 @@ def sayfa_al(url, params=None, json_mi=False):
             try:
                 return r.json()
             except ValueError:
-                _durum["engel"] = True
+                _durum["engel"] = time.monotonic()
                 raise MackolikEngel(ENGEL_MESAJI)
         if durum in (403, 429):
-            _durum["engel"] = True
+            _durum["engel"] = time.monotonic()
             raise MackolikEngel(ENGEL_MESAJI)
         if durum == 404:
             return None
@@ -135,7 +148,7 @@ def sayfa_al(url, params=None, json_mi=False):
 
 def gun_onbellegi():
     """Bu oturumda çekilmiş günlük listeler (ek istek göndermeden takım bilgisi okumak için)."""
-    return dict(_gun_onbellek)
+    return {k: v for k, (_, v) in _gun_onbellek.items()}
 
 
 # ---------------------------------------------------------------- arşiv
@@ -204,31 +217,36 @@ def arsiv_guncelle(db, spor, gun_sayisi=ARSIV_GUN, yazdir=print):
 
 def iddaa_eslesme(spor, olaylar, yazdir=print):
     """iddaa maçlarını Maçkolik maçlarıyla iddaa kodu üzerinden eşleştirir.
-    {iddaa event id: {"ev", "dep", "ev_id", "dep_id", "mk_id"}} döner."""
-    tarihler = sorted({datetime.fromtimestamp(e["d"], TZ).date() for e in olaylar})
+    {iddaa event id: {"ev", "dep", "ev_id", "dep_id", "mk_id"}} döner.
+    İstek: her maç günü için 1; komşu gün yalnızca gece yarısına yakın (00-04 / 21-24) eşleşmeyen maç varsa."""
     kodlar = {}
-    for t in tarihler:
-        for g in (t, t - timedelta(days=1)):  # gece yarısına yakın maçlar bir önceki günün listesinde olabilir
-            try:
-                veri = gun_al(spor, g.isoformat())
-            except MackolikEngel:
-                raise
-            except Exception as hata:
-                yazdir(f"  Maçkolik {g} alınamadı: {hata}")
-                continue
-            for m in veri["matches"].values():
-                if m.get("iddaaCode"):
-                    kodlar[int(m["iddaaCode"])] = m
-        eksik = [e for e in olaylar if e["i"] not in kodlar and datetime.fromtimestamp(e["d"], TZ).date() == t]
-        if eksik:  # ertesi gün listesine bak
-            try:
-                for m in gun_al(spor, (t + timedelta(days=1)).isoformat())["matches"].values():
-                    if m.get("iddaaCode"):
-                        kodlar[int(m["iddaaCode"])] = m
-            except MackolikEngel:
-                raise
-            except Exception:
-                pass
+
+    def gun_ekle(g):
+        try:
+            veri = gun_al(spor, g.isoformat())
+        except MackolikEngel:
+            raise
+        except Exception as hata:
+            yazdir(f"  Maçkolik {g} alınamadı: {hata}")
+            return
+        for m in veri["matches"].values():
+            if m.get("iddaaCode"):
+                kodlar[int(m["iddaaCode"])] = m
+
+    zamanlar = {e["i"]: datetime.fromtimestamp(e["d"], TZ) for e in olaylar}
+    for t in sorted({z.date() for z in zamanlar.values()}):
+        gun_ekle(t)
+    komsular = set()
+    for e in olaylar:
+        if int(e["i"]) in kodlar:
+            continue
+        z = zamanlar[e["i"]]
+        if z.hour < 4:
+            komsular.add(z.date() - timedelta(days=1))
+        elif z.hour >= 21:
+            komsular.add(z.date() + timedelta(days=1))
+    for g in sorted(komsular):
+        gun_ekle(g)
     sonuc = {}
     for e in olaylar:
         m = kodlar.get(int(e["i"]))

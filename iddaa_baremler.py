@@ -628,10 +628,17 @@ def guncelle(gun=0, ham_dosya=None, yazdir=print, ligler="hepsi", takim_verisi="
         from sofascore import eslestir  # ad + saat eşleştirici (ağa çıkmaz)
         try:
             ofs = _o
-            tk = ofs.takvim(simdi.timestamp(), sinir.timestamp(), yazdir)
-            eslesme = eslestir(ist_maclar, tk)
-            yazdir(f"İstatistik gereken {len(ist_maclar)} maçın {len(eslesme)} tanesi Ofsayt'ta eşleşti.")
-            ofs.hafiza_yaz(eslesme, ist_maclar)
+            # Önce daha önce eşleşen takımlar (istek yok); günlük liste (gün başına ~7 MB) yalnızca eşleşmeyen
+            # maçların günleri için çekilir
+            _o.hafizadan_esle(ist_maclar, eslesme)
+            eksik = [e for e in ist_maclar if e["i"] not in eslesme]
+            if eksik:
+                tk = ofs.gunler(sorted({datetime.fromtimestamp(e["d"], TZ).date() for e in eksik}), yazdir)
+                yeni = eslestir(eksik, tk)
+                eslesme.update(yeni)
+                ofs.hafiza_yaz(yeni, eksik)
+            yazdir(f"İstatistik gereken {len(ist_maclar)} maçın {len(eslesme)} tanesi Ofsayt'ta eşleşti "
+                   f"({len(ist_maclar) - len(eksik)} tanesi önceki eşleşmelerden).")
         except _o.OfsaytEngel as hata:
             yazdir(f"⚠ {hata} Bu maçlarda gol baremleri Maçkolik verisiyle çalışır; korner/kart/şut "
                    "baremleri için önceki istatistikler kullanılır.")

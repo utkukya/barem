@@ -224,8 +224,9 @@ def guncelle(gun=0, ligler="hepsi", yazdir=print, takim_verisi=True, ilerleme=No
     eslesme, tk = {}, pd.DataFrame()
     if secili and takim_verisi:
         try:
-            son_gun = max((datetime.fromtimestamp(e["d"], ib.TZ).date() - simdi.date()).days for e in secili)
-            tk = pd.concat([fs.gunluk("voleybol", g) for g in range(0, son_gun + 1)], ignore_index=True)
+            # Yalnızca maçı olan günlerin listesi (gün başına 1 istek)
+            gunler = sorted({(datetime.fromtimestamp(e["d"], ib.TZ).date() - simdi.date()).days for e in secili})
+            tk = pd.concat([fs.gunluk("voleybol", g) for g in gunler if g >= 0], ignore_index=True)
             eslesme = sofa.eslestir(secili, tk) if len(tk) else {}
             yazdir(f"{len(eslesme)}/{len(secili)} maç Flashscore'da eşleşti.")
         except fs.FlashscoreEngel as hata:
