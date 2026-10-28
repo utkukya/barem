@@ -242,6 +242,41 @@ def guncelle(yazdir=print, ilerleme=None, hazirlik=False, kadro_zorla=False):
     yazdir(f"Bitti. Maçkolik'e toplam {mk.istek_sayisi()} istek gönderildi.")
 
 
+def isimle_esle(olaylar):
+    """iddaa maçlarını ligin bilinen takımlarıyla ada göre eşleştirir (Maçkolik'e ulaşılamadığında).
+    {iddaa event id: {"ev", "dep", "ev_id", "dep_id", "mk_id"}}."""
+    import difflib
+    from iddaa_baremler import norm
+    with sqlite3.connect(DB) as con:
+        _tablolar(con)
+        takimlar = dict(con.execute("SELECT ev_id, ev FROM nba_mac UNION SELECT dep_id, dep FROM nba_mac").fetchall())
+    adlar = {tid: norm(ad) for tid, ad in takimlar.items() if ad}
+
+    def bul(ad):
+        n = norm(ad or "")
+        if not n:
+            return None
+        en, puan = None, 0.0
+        for tid, t in adlar.items():
+            p = difflib.SequenceMatcher(None, n, t).ratio()
+            if n == t:
+                p = 2.0
+            elif (n.split()[0] == t.split()[0] and len(n.split()[0]) > 3
+                  and n.split()[0] not in {"new", "los", "san", "golden", "hapoel", "maccabi", "real"}) \
+                    or n in t or t in n:  # "Oklahoma City" ~ "Oklahoma", "Fenerbahçe" ~ "Fenerbahçe Tarfin"
+                p = max(p, 0.9)
+            if p > puan:
+                en, puan = tid, p
+        return en if puan >= 0.8 else None
+
+    sonuc = {}
+    for e in olaylar:
+        ev, dep = bul(e.get("hn")), bul(e.get("an"))
+        if ev and dep and ev != dep:
+            sonuc[e["i"]] = {"ev": takimlar[ev], "dep": takimlar[dep], "ev_id": ev, "dep_id": dep, "mk_id": None}
+    return sonuc
+
+
 def bulten_guncelle(gun=1, yazdir=print):
     """iddaa'daki lig maçları (maç sonucu, toplam ve takım toplamı baremleri)."""
     import basketbol
@@ -257,9 +292,16 @@ def bulten_guncelle(gun=1, yazdir=print):
     if not nba_takimlari:
         yazdir(f"Önce {BASLIK} verisini güncelleyin (takımlar henüz bilinmiyor).")
         return 0
-    eslesme = mk.iddaa_eslesme("basketbol", secili, yazdir)
     # Yalnızca bu ligin iddaa yarışması (EuroLeague takımlarının yerel lig maçları karışmasın)
     secili = [e for e in secili if not IDDAA_CI or e.get("ci") in IDDAA_CI]
+    try:
+        eslesme = mk.iddaa_eslesme("basketbol", secili, yazdir)
+    except mk.MackolikEngel:
+        yazdir("Maçkolik erişilemiyor: iddaa maçları takım adlarıyla eşleştiriliyor.")
+        eslesme = {}
+    eksik = [e for e in secili if e["i"] not in eslesme]
+    if eksik:  # Maçkolik'te bulunamayan (ya da Maçkolik'e ulaşılamayan) maçlar: takım adından
+        eslesme.update(isimle_esle(eksik))
     nba = [e for e in secili if e["i"] in eslesme and eslesme[e["i"]]["ev_id"] in nba_takimlari]
     detay = ib._detaylari_cek(nba, yazdir) if nba else {}
     satirlar = []
