@@ -27,7 +27,7 @@ import mackolik as mk
 KLASOR = Path(__file__).resolve().parent
 DB = KLASOR / "nba.db"
 SEZON_BASLANGIC = "2026-10-20"      # normal sezonun ilk günü (bu tarihten önceki NBA maçları hazırlık maçı)
-KADRO_GUN = 3
+KADRO_GUN = 14         # kadrolar bu kadar günde bir yenilenir (yeni oyuncu görülürse daha erken)
 POZ = {1: "PG", 2: "SG", 3: "SF", 4: "PF", 5: "C"}
 POZLAR = list(POZ.values())
 KUTU_URL = "https://www.mackolik.com/ajax/basketball/match/box-score"
@@ -180,34 +180,13 @@ def guncelle(yazdir=print, ilerleme=None, hazirlik=False, kadro_zorla=False):
     yazdir(f"Arşivde {len(maclar)} biten {BASLIK} maçı var; "
            f"{len(alinan & set(maclar['mac_id']))} tanesinin kutu skoru veritabanında.")
 
-    # Takımlar ve kadrolar
+    # Kadrolar (pozisyonlar) yalnızca gerektiğinde: hiç çekilmemiş, KADRO_GUN'den eski ya da kutu skorlarda
+    # kadroda olmayan yeni oyuncusu olan takımlar. Önce kutu skorlar çekilir (Maçkolik isteği sınırlıysa önemli olan
+    # gelsin).
     adlar = {**dict(zip(maclar["ev_id"], maclar["ev"])), **dict(zip(maclar["dep_id"], maclar["dep"]))}
     simdi = datetime.now()
-    eski = [t for t in adlar if kadro_zorla or t not in takim.index or pd.isna(takim.loc[t, "kadro_cekim"])
-            or simdi - pd.to_datetime(takim.loc[t, "kadro_cekim"]) > timedelta(days=KADRO_GUN)]
     slug = {t: takim.loc[t, "slug"] for t in adlar if t in takim.index and isinstance(takim.loc[t, "slug"], str)}
     try:
-        if eski:
-            eksik_slug = [t for t in eski if t not in slug]
-            if eksik_slug:
-                slug.update(_sluglari_bul(eksik_slug, yazdir))
-            yazdir(f"Kadrolar: {len(eski)} takımın kadrosu (pozisyonlar) güncellenecek.")
-        for i, t in enumerate(eski, 1):
-            if t not in slug:
-                yazdir(f"  {adlar[t]}: Maçkolik adresi bulunamadı, kadro atlandı.")
-                continue
-            sayfa = mk.sayfa_al(KADRO_URL.format(slug=slug[t], tid=t))
-            kadro = kadro_ayristir(sayfa)
-            with sqlite3.connect(DB) as con:
-                _tablolar(con)
-                con.execute("INSERT OR REPLACE INTO nba_takim VALUES (?, ?, ?, ?)",
-                            (t, adlar[t], slug[t], simdi.strftime("%Y-%m-%d %H:%M") if kadro else None))
-                con.executemany("INSERT OR REPLACE INTO nba_kadro VALUES (?, ?, ?, ?, ?, ?)",
-                                [(k["oyuncu_id"], k["oyuncu"], t, k["forma"], k["poz"], k["poz_metin"])
-                                 for k in kadro])
-            if ilerleme:
-                ilerleme("kadro", i, len(eski))
-
         # Kutu skorlar
         yeni = maclar[~maclar["mac_id"].isin(alinan | yok)].sort_values("ts")
         if len(yeni):
@@ -237,6 +216,41 @@ def guncelle(yazdir=print, ilerleme=None, hazirlik=False, kadro_zorla=False):
                 ilerleme("kutu", i, len(yeni))
             if i % 10 == 0 or i == len(yeni):
                 yazdir(f"  [{i}/{len(yeni)}] maç")
+
+        # Kadrolar
+        with sqlite3.connect(DB) as con:
+            kadrolu = {r[0] for r in con.execute("SELECT oyuncu_id FROM nba_kadro")}
+            yeni_oyuncu = {r[0] for r in con.execute("SELECT DISTINCT takim_id FROM nba_kutu WHERE oyuncu_id NOT IN "
+                                                     "(SELECT oyuncu_id FROM nba_kadro)")} if kadrolu else set()
+
+        def cekim(t):
+            v = takim.loc[t, "kadro_cekim"] if t in takim.index else None
+            return pd.to_datetime(v) if isinstance(v, str) else None
+
+        eski = [t for t in adlar if kadro_zorla or cekim(t) is None
+                or simdi - cekim(t) > timedelta(days=KADRO_GUN)
+                or (t in yeni_oyuncu and simdi - cekim(t) > timedelta(days=1))]
+        if eski:
+            eksik_slug = [t for t in eski if t not in slug]
+            if eksik_slug:
+                slug.update(_sluglari_bul(eksik_slug, yazdir))
+            yazdir(f"Kadrolar: {len(eski)} takımın kadrosu (pozisyonlar) güncellenecek.")
+        for i, t in enumerate(eski, 1):
+            if t not in slug:
+                yazdir(f"  {adlar[t]}: Maçkolik adresi bulunamadı, kadro atlandı.")
+                continue
+            sayfa = mk.sayfa_al(KADRO_URL.format(slug=slug[t], tid=t))
+            kadro = kadro_ayristir(sayfa)
+            with sqlite3.connect(DB) as con:
+                _tablolar(con)
+                con.execute("INSERT OR REPLACE INTO nba_takim VALUES (?, ?, ?, ?)",
+                            (t, adlar[t], slug[t], simdi.strftime("%Y-%m-%d %H:%M") if kadro else None))
+                con.executemany("INSERT OR REPLACE INTO nba_kadro VALUES (?, ?, ?, ?, ?, ?)",
+                                [(k["oyuncu_id"], k["oyuncu"], t, k["forma"], k["poz"], k["poz_metin"])
+                                 for k in kadro])
+            if ilerleme:
+                ilerleme("kadro", i, len(eski))
+
     except mk.MackolikEngel as hata:
         yazdir(f"⚠ {hata}")
     yazdir(f"Bitti. Maçkolik'e toplam {mk.istek_sayisi()} istek gönderildi.")
