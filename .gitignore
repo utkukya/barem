@@ -14,3 +14,6 @@ son10_takim_bazli.csv
 
 # Kişisel ayarlar
 ayarlar.json
+
+# Giriş bilgileri ve diğer gizli ayarlar (depoya gönderilmez)
+.streamlit/secrets.toml

@@ -55,3 +55,14 @@ guncelleme_sifresi = "..."           # isteğe bağlı: güncelleme düğmesi ş
 
 Yerelde çalışmaya başlamadan önce `guncel_al.bat` ile buluttaki güncellemeleri indirin; yayınlarken
 `yayinla.bat` önce buluttakileri alır, aynı dosya iki tarafta da değiştiyse yereldeki kalır.
+
+## Giriş
+
+Uygulama giriş ister; giriş yapılmadan hiçbir sayfa (adresle açılsa da) çalışmaz. Kullanıcı adı ve şifre depoda
+yoktur, yalnızca şifrenin özeti Secrets'ta saklanır:
+
+1. `giris_ayarla.bat` (ya da `python giris_ayarla.py`) çalıştırın, kullanıcı adı ve şifreyi girin.
+2. Çıkan iki satırı Streamlit Cloud → Manage app → Settings → Secrets'a yapıştırın.
+3. İsterseniz aynı satırlar yereldeki `.streamlit/secrets.toml` dosyasına da yazılır (depoya gitmez).
+
+Bulutta bu satırlar yoksa uygulama tamamen kilitli kalır. Yerelde ayarlanmamışsa giriş sorulmaz.

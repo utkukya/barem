@@ -40,6 +40,11 @@ def _degisen_modulleri_yenile():
 
 _degisen_modulleri_yenile()
 
+# Giriş: yapılmamışsa yalnızca giriş formu görünür, hiçbir sayfa (adresle açılsa da) çalışmaz
+from giris import cikis_dugmesi, giris_kontrol
+
+giris_kontrol()
+
 FUTBOL = [
     st.Page("barem_tarayici.py", title="Barem Tarayıcı", icon="🎯", default=True),
     st.Page("mac_listesi.py", title="Maç İstatistikleri", icon="📋"),
@@ -66,7 +71,8 @@ aktif_spor = next(ad for ad, liste in SPORLAR.items() if sayfa.url_path in {p.ur
 
 menu = st.container()
 with menu:
-    sol, sag = st.columns([3.2, 4], vertical_alignment="center")
+    sol, sag, cik = st.columns([3.2, 4, 0.6], vertical_alignment="center")
+    cikis_dugmesi(cik)
     secilen = sol.segmented_control("Spor", list(SPORLAR), default=aktif_spor, key=f"spor_menu_{aktif_spor}",
                                     label_visibility="collapsed")
     if secilen and secilen != aktif_spor:
