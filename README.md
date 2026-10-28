@@ -42,3 +42,16 @@ Bulutta çalışan sürüm veri çekmez; güncelleme düğmeleri kapalıdır. Ve
 3. Streamlit Cloud birkaç dakika içinde yeni veriyle açılır.
 
 Yerelde güncelleme her zaman açıktır; `BAREM_GUNCELLEME=0` / `1` ortam değişkeniyle zorlanabilir.
+
+## Buluttan güncelleme (kalıcı)
+
+Streamlit Cloud'daki güncelleme düğmeleri de çalışır. Buluttan çekilen verinin kalıcı olması için güncellenen
+veritabanı GitHub'a otomatik commit edilir (`bulut_kayit.py`). Streamlit → Manage app → Settings → Secrets:
+
+```
+github_token = "github_pat_..."      # yalnızca bu depoya Contents: Read and write izni
+guncelleme_sifresi = "..."           # isteğe bağlı: güncelleme düğmesi şifre ister
+```
+
+Yerelde çalışmaya başlamadan önce `guncel_al.bat` ile buluttaki güncellemeleri indirin; yayınlarken
+`yayinla.bat` önce buluttakileri alır, aynı dosya iki tarafta da değiştiyse yereldeki kalır.

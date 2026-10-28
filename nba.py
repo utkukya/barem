@@ -604,9 +604,13 @@ def _takim_norm(s):
 def props_yukle():
     try:
         with sqlite3.connect(DB) as con:
-            return pd.read_sql("SELECT * FROM nba_prop", con)
+            p = pd.read_sql("SELECT * FROM nba_prop", con)
     except Exception:
         return pd.DataFrame()
+    for k in ("cizgi", "ust_oran", "alt_oran"):  # eşik pazarlarında alt_oran boş (None) -> NaN
+        if k in p:
+            p[k] = pd.to_numeric(p[k], errors="coerce")
+    return p
 
 
 def props_esle(props, kutu):

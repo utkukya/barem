@@ -110,8 +110,10 @@ with pencere:
     takim_verisi = st.checkbox("Takımların son 10 maçını Maçkolik'ten çek", ayar.get("takim_verisi", True),
                                key="bb_takim", help="Maçkolik'in günlük sonuçları arşivlenir: ilk seferde son 45 gün (gün başına 1 "
                                                     "istek), sonra yalnızca bugün ve dün.")
+    from ortam import guncelleme_izni
+    izin = guncelleme_izni("bb")
     if st.button("Güncellemeyi başlat", type="primary", width="stretch", key="bb_basla",
-                 disabled=not tum_ligler and not secili_ci):
+                 disabled=not izin or not tum_ligler and not secili_ci):
         ayar_yaz(gun=gun, tum_ligler=tum_ligler, takim_verisi=takim_verisi,
                  **({"ligler": [int(c) for c in secili_ci]} if secili_ci else {}))
         st.session_state["bb_guncelleme"] = {"gun": gun, "ligler": "hepsi" if tum_ligler else secili_ci,
@@ -135,6 +137,8 @@ if "bb_guncelleme" in st.session_state:
             yaz("Tablolar hazırlanıyor…")
             import hazir
             hazir.hepsini_hazirla(yazdir=yaz, sporlar=("basketbol",))
+            import bulut_kayit
+            bulut_kayit.guncellemeyi_kaydet(["basketbol.db"], "basketbol", yaz)
             durum.update(label=f"{mac} maç, {barem} barem güncellendi", state="complete", expanded=False)
         except Exception as e:
             durum.update(label=f"Çekilemedi: {e}", state="error")

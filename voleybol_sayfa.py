@@ -104,8 +104,10 @@ with pencere:
     takim_verisi = st.checkbox("Takımların son 10 maçını Flashscore'dan çek", ayar.get("takim_verisi", True),
                                key="vb_takim", help="Takım başına 1 istek. Son 12 saatte çekilen takımlar ve "
                                                     "veritabanında olan maçlar tekrar indirilmez.")
+    from ortam import guncelleme_izni
+    izin = guncelleme_izni("vb")
     if st.button("Güncellemeyi başlat", type="primary", width="stretch", key="vb_basla",
-                 disabled=not tum_ligler and not secili_ci):
+                 disabled=not izin or not tum_ligler and not secili_ci):
         ayar_yaz(gun=gun, tum_ligler=tum_ligler, takim_verisi=takim_verisi,
                  **({"ligler": [int(c) for c in secili_ci]} if secili_ci else {}))
         st.session_state["vb_guncelleme"] = {"gun": gun, "ligler": "hepsi" if tum_ligler else secili_ci,
@@ -126,6 +128,8 @@ if "vb_guncelleme" in st.session_state:
         try:
             mac, adet = vb.guncelle(g["gun"], g["ligler"], yazdir=yaz, takim_verisi=g["takim_verisi"],
                                     ilerleme=ilerle)
+            import bulut_kayit
+            bulut_kayit.guncellemeyi_kaydet(["voleybol.db"], "voleybol", yaz)
             durum.update(label=f"{mac} maç, {adet} oran güncellendi", state="complete", expanded=False)
         except Exception as e:
             durum.update(label=f"Çekilemedi: {e}", state="error")

@@ -127,8 +127,10 @@ with pencere:
              "Akıllı: iddaa'nın korner/kart/şut pazarı açtığı maçlarda ve büyük liglerde istatistikler Ofsayt.com'dan "
              "çekilir. Tam: tüm maçlarda Ofsayt istatistikleri (uzun sürer). "
              "Son 12 saatte çekilen takımlar tekrar indirilmez.") or "akilli"
+    from ortam import guncelleme_izni
+    izin = guncelleme_izni("gn")
     if st.button("Güncellemeyi başlat", type="primary", width="stretch", key="gn_basla",
-                 disabled=not tum_ligler and not secili_ci):
+                 disabled=not izin or not tum_ligler and not secili_ci):
         ayar_yaz(gun=gun, tum_ligler=tum_ligler, takim_verisi=takim_verisi,
                  **({"ligler": [int(c) for c in secili_ci]} if secili_ci else {}))
         st.session_state["guncelleme"] = {"gun": gun, "ligler": "hepsi" if tum_ligler else secili_ci,
@@ -155,6 +157,8 @@ if "guncelleme" in st.session_state:
             yaz("Tablolar hazırlanıyor (barem tarayıcı ve maç istatistikleri; sayfalar bundan sonra hızlı açılır)…")
             import hazir
             hazir.hepsini_hazirla(yazdir=yaz, sporlar=("futbol",))
+            import bulut_kayit
+            bulut_kayit.guncellemeyi_kaydet(["futbol.db"], "futbol", yaz)
             durum.update(label=f"{adet} barem güncellendi", state="complete", expanded=bool(eslesmeyen))
         except Exception as e:
             durum.update(label=f"Çekilemedi: {e}", state="error")

@@ -73,7 +73,9 @@ with pencere:
     prop_al = st.checkbox("Oyuncu baremlerini global piyasadan çek", True, key=ON + "_prop_al",
                           help="Oynanacak maçlarda oyuncuların sayı, ribaund, asist, 3 sayılık... Alt/Üst çizgileri ve "
                                "oranları; Kambi'nin (Unibet altyapısı) ücretsiz oran servisinden. Maç başına 1 istek.")
-    if st.button("Güncellemeyi başlat", type="primary", width="stretch", key=ON + "_basla"):
+    from ortam import guncelleme_izni
+    izin = guncelleme_izni(ON)
+    if st.button("Güncellemeyi başlat", type="primary", width="stretch", key=ON + "_basla", disabled=not izin):
         st.session_state[ON + "_guncelleme"] = {"gun": 1 if bulten_gun is None else bulten_gun,
                                               "hazirlik": hazirlik, "kadro": kadro_zorla, "prop": prop_al}
 
@@ -103,6 +105,8 @@ if ON + "_guncelleme" in st.session_state:
             yaz("Tablolar hazırlanıyor…")
             import hazir
             hazir.hepsini_hazirla(yazdir=yaz, sporlar=(LIG_ADI,))
+            import bulut_kayit
+            bulut_kayit.guncellemeyi_kaydet([nba.DB.name, "basketbol.db"], LIG, yaz)
             durum.update(label=f"{LIG} verisi güncellendi", state="complete", expanded=False)
         except Exception as e:
             durum.update(label=f"Güncellenemedi: {e}", state="error")
@@ -598,13 +602,19 @@ with sekme_kart:
     # Piyasa çizgisi
     piyasa = pe[(pe["oyuncu_id"] == oid) & (pe["stat"] == stat_k)] if len(pe) else pe
     ort10 = log_tum[stat_k].tail(10).mean()
+    if len(piyasa) > 1:  # önce Alt/Üst çizgisi; yalnızca eşik pazarları varsa ortalamaya en yakın olanı
+        piyasa = piyasa.assign(_ou=pd.to_numeric(piyasa["alt_oran"], errors="coerce").isna(),
+                               _uzak=(piyasa["cizgi"] - ort10).abs()).sort_values(["_ou", "_uzak"])
     varsayilan = float(piyasa["cizgi"].iloc[0]) if len(piyasa) else float(np.floor(ort10) + 0.5)
     k1, k2, _ = st.columns([1, 1.4, 3])
     cizgi = k1.number_input("Barem" + (" (piyasa)" if len(piyasa) else ""), value=varsayilan, step=1.0,
                             key=f"{ON}_k_cizgi_{oid}_{stat_k}")
     if len(piyasa):
-        k2.markdown(f"<div style='padding-top:30px;font-size:14px'>Üst <b>{piyasa['ust_oran'].iloc[0]:.2f}</b> · "
-                    f"Alt <b>{piyasa['alt_oran'].iloc[0]:.2f}</b></div>", unsafe_allow_html=True)
+        u_o = pd.to_numeric(piyasa["ust_oran"], errors="coerce").iloc[0]
+        a_o = pd.to_numeric(piyasa["alt_oran"], errors="coerce").iloc[0]
+        oranlar = f"Üst <b>{u_o:.2f}</b>" if pd.notna(u_o) else ""
+        oranlar += f" · Alt <b>{a_o:.2f}</b>" if pd.notna(a_o) else " · Alt satılmıyor (eşik pazarı)"
+        k2.markdown(f"<div style='padding-top:30px;font-size:14px'>{oranlar}</div>", unsafe_allow_html=True)
 
     sv = savunma(damga, stat_k)
     toplam_t = len(sv)

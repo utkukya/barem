@@ -1,4 +1,4 @@
-"""Çalışma ortamı: uygulama Streamlit Cloud'da mı (yalnızca okuma) yoksa yerel bilgisayarda mı (güncelleme açık)."""
+"""Çalışma ortamı: yerel bilgisayar ya da Streamlit Cloud; güncelleme izni ve tablo sayfalama."""
 import os
 from pathlib import Path
 
@@ -9,14 +9,39 @@ def bulutta_mi():
 
 
 def guncelleme_acik():
-    """Veri çekme yalnızca yerelde. BAREM_GUNCELLEME=1 / 0 ortam değişkeniyle zorlanabilir."""
+    """Veri çekme hem yerelde hem Streamlit Cloud'da açık. BAREM_GUNCELLEME=0 ortam değişkeniyle kapatılabilir."""
     v = os.environ.get("BAREM_GUNCELLEME")
     if v is not None:
         return v.strip() == "1"
-    return not bulutta_mi()
+    return True
 
 
-KAPALI_YARDIM = "Bu sürüm yalnızca görüntüleme içindir; veriler yerel bilgisayardan güncellenip yayınlanır."
+KAPALI_YARDIM = "Güncelleme bu ortamda kapalı (BAREM_GUNCELLEME=0)."
+
+
+def _sifre():
+    """Streamlit Cloud'da Settings → Secrets bölümüne guncelleme_sifresi = "..." yazılırsa güncelleme şifre ister."""
+    try:
+        import streamlit as st
+        return st.secrets.get("guncelleme_sifresi")
+    except Exception:
+        return None
+
+
+def guncelleme_izni(anahtar):
+    """Güncelleme penceresinde, düğmeden önce çağrılır. Şifre tanımlıysa (yalnızca bulutta) şifre alanı gösterir;
+    güncellemeye izin varsa True döner."""
+    import streamlit as st
+    sifre = _sifre() if bulutta_mi() else None
+    if not sifre or st.session_state.get("guncelleme_izni"):
+        return True
+    girilen = st.text_input("Güncelleme şifresi", type="password", key=f"{anahtar}_sifre")
+    if girilen and girilen == str(sifre):
+        st.session_state["guncelleme_izni"] = True
+        return True
+    if girilen:
+        st.error("Şifre yanlış.")
+    return False
 
 
 SAYFA_BOYUTU = 100

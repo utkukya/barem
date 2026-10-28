@@ -9,6 +9,8 @@ if exist ".venv\Scripts\python.exe" (
 )
 git add -A
 git commit -m "Veri guncellemesi %date% %time%"
+REM Buluttan yapilan guncellemeleri al; ayni dosya iki tarafta da degistiyse bu bilgisayardaki surum kalir
+git pull --no-rebase --no-edit -X ours origin main
 git push
 echo.
 echo Yayinlandi. Streamlit Cloud birkac dakika icinde guncellenir.
