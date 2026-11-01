@@ -17,3 +17,5 @@ ayarlar.json
 
 # Giriş bilgileri ve diğer gizli ayarlar (depoya gönderilmez)
 .streamlit/secrets.toml
+guncelleme_log.txt
+yayinla_log.txt

@@ -28,10 +28,22 @@ Veritabanları depoda yoktur; uygulama ilk açılışta boş başlar. Her sayfad
 ## Veri kaynakları
 
 - iddaa (bülten, oranlar, baremler)
-- Maçkolik (futbol ve basketbol sonuç arşivi, NBA kutu skorları ve kadroları)
-- Ofsayt.com (futbol maç istatistikleri: korner, kart, şut...)
-- Flashscore (voleybol)
+- Maçkolik (futbol ve basketbol sonuç arşivi, NBA/EuroLeague kutu skorları ve kadroları)
+- Ofsayt.com, Flashscore ve SofaScore (futbol maç istatistikleri: korner, kart, şut...)
+- Flashscore (voleybol; NBA/EuroLeague kutu skorlarının bir kısmı)
+- SofaScore (NBA/EuroLeague kutu skorlarının bir kısmı)
 - Kambi / Unibet (NBA oyuncu baremleri)
+
+İstek yükü siteler arasında paylaştırılır:
+
+- **Futbol istatistikleri:** her takım tek bir siteden çekilir (Ofsayt, Flashscore ya da SofaScore). Daha önce
+  eşleşen takım hep aynı siteden gelir; yeni takımlar o güncellemede en az takım çekilecek siteye verilir. Bir
+  sitenin günlük listesinde bulunamayan maç diğerlerinde aranır; biri istekleri reddederse yeni takımlar
+  diğerlerine gider.
+- **NBA / EuroLeague kutu skorları:** yeni maçlar Maçkolik, Flashscore ve SofaScore arasında üçe bölünür (maç
+  kimliğine göre sabit; Flashscore yalnızca son 7 günü verir). Biri veri vermezse ya da reddederse maç diğerlerinden
+  denenir. Flashscore/SofaScore oyuncuları ad + takım üzerinden Maçkolik oyuncularına bağlanır; bulunamayan oyuncu
+  kadro güncellenince yeniden denenir. Maç listesi (arşiv) ve kadrolar Maçkolik'ten gelir.
 
 ## Streamlit Cloud (yalnızca görüntüleme)
 

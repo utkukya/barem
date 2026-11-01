@@ -266,7 +266,7 @@ for kol, ad, db_ad, at_, ye_ in ((k1, r["Ev"], r["ev_db"], "Ev at", "Ev ye"), (k
     with kol:
         if not isinstance(db_ad, str):
             st.markdown(f"**{ad}**")
-            st.info("Bu takımın geçmiş maçı veritabanında yok (Maçkolik/Ofsayt'ta bulunamadı ya da takım verisi çekilmedi).")
+            st.info("Bu takımın geçmiş maçı veritabanında yok (Maçkolik/Ofsayt/Flashscore'da bulunamadı ya da takım verisi çekilmedi).")
             continue
         tab, mm = son_mac_tablosu(db_ad)
         st.markdown(f"**{ad}** · attığı {r[at_]:.2f} · yediği {r[ye_]:.2f} (maç başı, son {len(tab)} maç)")
@@ -302,7 +302,7 @@ for stat in GOSTER:
 if satirlar:
     st.markdown(f"#### İstatistik ortalamaları (son {n} maç)")
     st.dataframe(pd.DataFrame(satirlar), hide_index=True, width="stretch")
-    st.caption("Maç: ortalamaya giren maç sayısı (ev/dep). İstatistikler yalnızca Ofsayt'tan çekilen maçlarda var; "
+    st.caption("Maç: ortalamaya giren maç sayısı (ev/dep). İstatistikler yalnızca Ofsayt ya da Flashscore'dan çekilen maçlarda var; "
                "o takımlarda yalnızca gol satırı görünür.")
 
 b1, b2, _ = st.columns([1, 1, 2])

@@ -143,7 +143,7 @@ def gunluk(tarih):
 
 
 # ---------------------------------------------------------------- takımın maçları
-_TR = re.compile(r'<tr class="match-row[^"]*" data-match-id="([0-9a-f-]{36})"([^>]*)>(.*?)</tr>', re.S)
+_TR = re.compile(r'<tr class="match-row[^"]*"\s+data-match-id="([0-9a-f-]{36})"([^>]*)>(.*?)</tr>', re.S)
 _ATTR = re.compile(r'data-([a-z-]+)="([^"]*)"')
 _SKOR = re.compile(r'data-role="score">\s*(\d+)\s*-\s*(\d+)\s*<')
 _IY = re.compile(r'match-switchable-td[^"]*">\s*<span[^>]*>\s*(\d+)\s*-\s*(\d+)\s*</span>')
@@ -336,11 +336,11 @@ def takvim(baslangic_ts, bitis_ts, yazdir=print):
     return pd.concat(parcalar, ignore_index=True) if parcalar else pd.DataFrame()
 
 
-def _uzun(mac, ist, takim_id, ad):
-    """Bir maçın satırı, takım açısından (maclar tablosu biçimi)."""
+def _uzun(mac, ist, takim_id, ad, sid=None):
+    """Bir maçın satırı, takım açısından (maclar tablosu biçimi). Flashscore da kullanır (sid: kendi kimliği)."""
     ev_mi = mac["ev_id"] == takim_id
     t, r = ("ev", "dep") if ev_mi else ("dep", "ev")
-    satir = {"lig": mac["lig"], "mac_id": sayisal_id(mac["mac_id"]),
+    satir = {"lig": mac["lig"], "mac_id": sid if sid is not None else sayisal_id(mac["mac_id"]),
              "tarih": datetime.fromtimestamp(mac["ts"], TZ).replace(tzinfo=None), "hafta": None,
              "saha": "Ev" if ev_mi else "Deplasman", "takim": ad,
              "rakip": mac["dep"] if ev_mi else mac["ev"],
@@ -352,10 +352,18 @@ def _uzun(mac, ist, takim_id, ad):
     return satir
 
 
-def takim_adi_belirle(takim_id, ad, takim_tablosu):
-    """Aynı adı taşıyan başka bir ofsayt takımı varsa ada kısa kimlik eklenir (veritabanında takım adla tutulur)."""
+def _flashscore_adlari():
+    with sqlite3.connect(DB) as con:
+        if not con.execute("SELECT name FROM sqlite_master WHERE name = 'fs_takim'").fetchone():
+            return set()
+        return {r[0] for r in con.execute("SELECT takim FROM fs_takim")}
+
+
+def takim_adi_belirle(takim_id, ad, takim_tablosu, diger=frozenset()):
+    """Aynı adı taşıyan başka bir takım (Ofsayt'ta ya da Flashscore'da) varsa ada kısa kimlik eklenir
+    (veritabanında takım adla tutulur)."""
     baskasi = takim_tablosu[(takim_tablosu["takim"] == ad) & (takim_tablosu.index != takim_id)]
-    return f"{ad} #{takim_id[:4]}" if len(baskasi) else ad
+    return f"{ad} #{takim_id[:4]}" if len(baskasi) or ad in diger else ad
 
 
 def takimlari_guncelle(takimlar, yazdir=print, ilerleme=None, zorla=False):
@@ -380,6 +388,8 @@ def takimlari_guncelle(takimlar, yazdir=print, ilerleme=None, zorla=False):
            f"({len(takimlar) - len(yapilacak)} takım zaten güncel).")
     onbellek, biriken, bos = {}, [], []
     t0, istek0 = time.time(), istek_sayisi()
+    fs_adlar = _flashscore_adlari() if yapilacak else set()
+    bos_takim = []  # sayfasında biten maç bulunamayan takımlar (site biçimi değişirse burada görünür)
 
     def yaz():
         nonlocal biriken, bos
@@ -401,10 +411,11 @@ def takimlari_guncelle(takimlar, yazdir=print, ilerleme=None, zorla=False):
             yazdir(f"  Ofsayt hatası ({ad}): {hata}")
             continue
         if not maclar:
+            bos_takim.append(ad)
             continue
         gercek_ad = next((m["ev"] if m["ev_id"] == tid else m["dep"] for m in reversed(maclar)
                           if (m["ev"] if m["ev_id"] == tid else m["dep"])), ad)
-        db_adi = takim_adi_belirle(tid, gercek_ad, tablo)
+        db_adi = takim_adi_belirle(tid, gercek_ad, tablo, fs_adlar)
         for m in maclar:
             sid = sayisal_id(m["mac_id"])
             if sid in var or m["mac_id"] in yok:
@@ -437,4 +448,8 @@ def takimlari_guncelle(takimlar, yazdir=print, ilerleme=None, zorla=False):
         if len(biriken) >= 60:
             yaz()
     yaz()
+    if bos_takim:
+        yazdir(f"  ⚠ Ofsayt: {len(bos_takim)} takımın sayfasında biten maç okunamadı"
+               + (f" ({', '.join(bos_takim[:8])})" if len(bos_takim) <= 8 else "")
+               + (". Sitenin sayfa biçimi değişmiş olabilir." if len(bos_takim) == len(yapilacak) else "."))
     return adlar

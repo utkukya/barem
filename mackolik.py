@@ -212,7 +212,43 @@ def arsiv_guncelle(db, spor, gun_sayisi=ARSIV_GUN, yazdir=print):
         eklenen += len(satirlar)
         if len(cekilecek) > 3 and (i % 10 == 0 or i == len(cekilecek)):
             yazdir(f"  [{i}/{len(cekilecek)}] gün · {eklenen} maç arşivlendi")
+    silinen = arsivi_kirp(db, spor)
+    if silinen:
+        yazdir(f"Maçkolik arşivi ({spor}): takımların son {TUTULAN_MAC} maçından eski {silinen} maç silindi.")
     return len(cekilecek)
+
+
+TUTULAN_MAC = 10
+
+
+def korunan_ligler(spor):
+    """Tüm maçları saklanan ligler (lig, ülke): NBA ve EuroLeague — oyuncu kartları ve sıralamalar için."""
+    if spor != "basketbol":
+        return set()
+    import ligler
+    kume = {("NBA", "ABD")}
+    for ayar in ligler.LIGLER.values():
+        if ayar and ayar.get("NBA_LIG"):
+            kume.add((ayar["NBA_LIG"], ayar.get("NBA_ULKE")))
+    return kume
+
+
+def arsivi_kirp(db, spor, n=TUTULAN_MAC):
+    """Arşivde her takımın yalnızca son n maçı kalır (bir maç, iki takımdan birinin son n maçındaysa kalır).
+    Korunan liglerin (NBA, EuroLeague) maçları silinmez. Silinen maç sayısını döner."""
+    korunan = korunan_ligler(spor)
+    with sqlite3.connect(db) as con:
+        _tablolar(con)
+        m = pd.read_sql("SELECT mac_id, ts, ev_id, dep_id, lig, ulke FROM mk_mac WHERE spor = ?", con, params=(spor,))
+        if m.empty:
+            return 0
+        taraf = pd.concat([m[["mac_id", "ts"]].assign(tid=m["ev_id"]), m[["mac_id", "ts"]].assign(tid=m["dep_id"])])
+        sira = taraf.groupby("tid")["ts"].rank(method="first", ascending=False)
+        kalan = set(taraf.loc[sira <= n, "mac_id"])
+        koru = pd.Series(list(zip(m["lig"], m["ulke"]))).isin(korunan).to_numpy() if korunan else False
+        sil = m.loc[~m["mac_id"].isin(kalan) & ~pd.Series(koru, index=m.index), "mac_id"]
+        con.executemany("DELETE FROM mk_mac WHERE spor = ? AND mac_id = ?", [(spor, x) for x in sil])
+    return len(sil)
 
 
 def iddaa_eslesme(spor, olaylar, yazdir=print):

@@ -778,3 +778,81 @@ def h2h_alindi(db, event_idler):
     with sqlite3.connect(db) as con:
         con.execute("CREATE TABLE IF NOT EXISTS h2h_alinan (event_id INTEGER PRIMARY KEY)")
         con.executemany("INSERT OR IGNORE INTO h2h_alinan VALUES (?)", [(int(i),) for i in event_idler])
+
+
+# ---------------------------------------------------------------- iş bölümü: futbol takımı ataması
+def _atama_tablosu(con):
+    con.execute("CREATE TABLE IF NOT EXISTS sofa_eslesme (iddaa_adi TEXT PRIMARY KEY, takim_id INTEGER, takim TEXT)")
+
+
+def atama_hafizasi(db=DB):
+    """İş bölümünde SofaScore'a verilmiş takımlar: {iddaa adı: (SofaScore takım id, ad)}."""
+    with sqlite3.connect(db) as con:
+        _atama_tablosu(con)
+        return {r[0]: (int(r[1]), r[2]) for r in con.execute("SELECT * FROM sofa_eslesme")}
+
+
+def atama_yaz(kayitlar, db=DB):
+    """kayitlar: [(iddaa adı, takım id, ad)]"""
+    with sqlite3.connect(db) as con:
+        _atama_tablosu(con)
+        con.executemany("INSERT OR REPLACE INTO sofa_eslesme VALUES (?, ?, ?)",
+                        [(a, int(i), n) for a, i, n in kayitlar])
+
+
+def eski_eslesmeler(db=DB):
+    """Eski SofaScore dönemindeki iddaa adı -> (takım id, ad) kayıtları (takvim isteği yapmadan eşleşmek için)."""
+    try:
+        with sqlite3.connect(db) as con:
+            return {a: (int(i), n) for a, i, n in con.execute("SELECT iddaa_adi, sofa_id, ad FROM iddaa_takim")
+                    if i is not None}
+    except sqlite3.Error:
+        return {}
+
+
+# ---------------------------------------------------------------- basketbol (NBA / EuroLeague) kutu skor
+def turnuva_maclari(turnuva_id, gun):
+    """Bir turnuvanın o günkü maçları (gün: 'YYYY-MM-DD'); eslestir() için DataFrame. 1 istek."""
+    veri = get(f"/unique-tournament/{turnuva_id}/scheduled-events/{gun}") or {}
+    satirlar = []
+    for e in veri.get("events", []):
+        ev, dep = e.get("homeTeam") or {}, e.get("awayTeam") or {}
+        satirlar.append({"sofa_id": e["id"], "ts": e.get("startTimestamp") or 0, "ev": ev.get("name"),
+                         "dep": dep.get("name"), "ev_kisa": ev.get("shortName") or "",
+                         "dep_kisa": dep.get("shortName") or "", "ev_id": ev.get("id"), "dep_id": dep.get("id"),
+                         "durum": (e.get("status") or {}).get("type")})
+    return pd.DataFrame(satirlar)
+
+
+KUTU_ALAN = {"sayi": "points", "rib": "rebounds", "ast": "assists", "iki_i": "twoPointsMade",
+             "iki_a": "twoPointAttempts", "uc_i": "threePointsMade", "uc_a": "threePointAttempts",
+             "sa_i": "freeThrowsMade", "sa_a": "freeThrowAttempts", "faul": "personalFouls", "blok": "blocks",
+             "tc": "steals", "tk": "turnovers"}
+
+
+def kutu_ayristir(veri):
+    """/event/{id}/lineups -> [{sofa_oyuncu_id, ad, taraf (1/2), ilk5, sira, sn, sayi, ...}] — oynayanlar."""
+    sonuc = []
+    for taraf, anahtar in ((1, "home"), (2, "away")):
+        sira = 0
+        for p in ((veri or {}).get(anahtar) or {}).get("players", []):
+            st = p.get("statistics") or {}
+            sn = int(st.get("secondsPlayed") or 0)
+            if sn <= 0:
+                continue
+            o = {"sofa_oyuncu_id": (p.get("player") or {}).get("id"), "ad": (p.get("player") or {}).get("name") or "",
+                 "taraf": taraf, "ilk5": int(not p.get("substitute", True)), "sira": sira, "sn": sn}
+            for k, a in KUTU_ALAN.items():
+                o[k] = int(st.get(a) or 0)
+            sonuc.append(o)
+            sira += 1
+    # ilk 5 önce (Maçkolik'teki sırayla uyumlu)
+    sonuc.sort(key=lambda o: (o["taraf"], -o["ilk5"], o["sira"]))
+    for t in (1, 2):
+        for i, o in enumerate(x for x in sonuc if x["taraf"] == t):
+            o["sira"] = i
+    return sonuc
+
+
+def kutu_skor(event_id):
+    return kutu_ayristir(get(f"/event/{event_id}/lineups"))

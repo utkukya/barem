@@ -5,6 +5,9 @@ Kaynak Maçkolik:
   - Maç listesi: basketbol sayfasının kullandığı günlük sonuç arşivi (basketbol.db, mk_mac). Ek istek yok.
   - Kutu skor: maç başına 1 istek (dakika, sayı, ribaund, asist, 2/3 sayılık ve serbest atış isabet/deneme,
     faul, blok, top çalma, top kaybı; ilk 5 işaretli). Bir kez çekilen maç tekrar istenmez.
+    İş bölümü: yeni maçlar Maçkolik, Flashscore ve SofaScore arasında üçe bölünür (maç kimliğine göre sabit;
+    Flashscore yalnızca son 7 günü verir). Biri veri vermezse ya da reddederse diğerleri denenir. Flashscore ve
+    SofaScore oyuncuları ad + takım üzerinden Maçkolik oyuncu kimliklerine bağlanır.
   - Kadro: takım başına 1 istek (oyuncuların pozisyonu: Gard (1), Skorer Gard (2), Kısa forvet (3),
     Uzun Forvet (4), Pivot (5)). 3 günde bir yenilenir.
 
@@ -38,6 +41,7 @@ BASLIK = "NBA"           # arayüzde görünen ad
 SEZON_ADI = "2026-27"
 IDDAA_CI = {138}         # iddaa yarışma kimliği (ABD Amerika Basketbol Ligi)
 KAMBI_LISTE = "listView/basketball/nba.json"
+SOFA_TURNUVA = 132       # SofaScore turnuva kimliği (NBA)
 # Aynı kod EuroLeague için de kullanılır: ligler.py bu sabitleri değiştirip modülün ayrı bir kopyasını yükler.
 
 # İstatistikler: anahtar -> (etiket, kısa)
@@ -60,6 +64,10 @@ def _tablolar(con):
         kadro_cekim TEXT)""")
     con.execute("""CREATE TABLE IF NOT EXISTS nba_kadro (oyuncu_id TEXT PRIMARY KEY, oyuncu TEXT, takim_id TEXT,
         forma TEXT, poz INTEGER, poz_metin TEXT)""")
+    con.execute("CREATE TABLE IF NOT EXISTS nba_fs_mac (mac_id TEXT PRIMARY KEY, fs_id TEXT)")
+    con.execute("CREATE TABLE IF NOT EXISTS nba_sofa_mac (mac_id TEXT PRIMARY KEY, sofa_id INTEGER)")
+    con.execute("CREATE TABLE IF NOT EXISTS nba_fs_oyuncu (fs_id TEXT PRIMARY KEY, oyuncu_id TEXT, oyuncu TEXT)")
+    con.execute("CREATE TABLE IF NOT EXISTS nba_kutu_kaynak (mac_id TEXT PRIMARY KEY, kaynak TEXT)")
 
 
 # ---------------------------------------------------------------- ayrıştırma
@@ -160,6 +168,223 @@ def _sluglari_bul(eksik, yazdir):
     return bulunan
 
 
+# ---------------------------------------------------------------- Flashscore ile iş bölümü
+KAYNAKLAR = ["Maçkolik", "Flashscore", "SofaScore"]
+
+
+def ilk_kaynak(mac_id):
+    """Maçın kutu skoru önce hangi siteden istenecek? Maç kimliğine göre sabit; maçlar üçe bölünür."""
+    import hashlib
+    return KAYNAKLAR[int(hashlib.md5(str(mac_id).encode()).hexdigest(), 16) % 3]
+
+
+def flashscore_payi(mac_id):
+    return ilk_kaynak(mac_id) == "Flashscore"
+
+
+def _ad_anahtar(s):
+    from iddaa_baremler import norm
+    return norm(s or "")
+
+
+def _fs_parcala(o):
+    """Flashscore oyuncusu ('O'Neale R.', slug 'o-neale-royce') -> (soyad kelimeleri, ad kelimeleri)."""
+    soyad_ham = re.sub(r"\s+\S{1,3}\.$", "", o["ad"]).strip() or o["ad"]
+    soyad = _ad_anahtar(soyad_ham).split()
+    parca = [p for p in o["slug"].split("-") if p]
+    hedef = "".join(soyad)
+    for k in range(1, len(parca) + 1):  # slug'ın soyada karşılık gelen ilk k parçası
+        if "".join(parca[:k]) == hedef:
+            return soyad, parca[k:]
+    return soyad, parca[len(soyad):]
+
+
+def _fs_tam_ad(o):
+    """Maçkolik'te bulunamayan Flashscore oyuncusunun görünen adı: 'Royce O'Neale'."""
+    soyad_ham = re.sub(r"\s+\S{1,3}\.$", "", o["ad"]).strip() or o["ad"]
+    return f"{' '.join(_fs_parcala(o)[1]).title()} {soyad_ham}".strip()
+
+
+def fs_oyuncu_esle(o, adaylar, lig_adaylari=()):
+    """Flashscore oyuncusu -> Maçkolik oyuncu kimliği ya da None.
+    adaylar: [(oyuncu_id, ad)] — takımın bilinen oyuncuları; lig_adaylari: tüm lig (takas edilenler için)."""
+    soyad, adlar = _fs_parcala(o)
+    hedef = sorted(soyad + adlar)
+    bas = (adlar[0][:1] if adlar else "") or _ad_anahtar(o["ad"].split()[-1])[:1]
+
+    def tam(liste):
+        b = {oid for oid, ad in liste if sorted(_ad_anahtar(ad).split()) == hedef}
+        return b.pop() if len(b) == 1 else None
+
+    def kisa(liste):  # soyadı tutan ve adı aynı harfle başlayan tek oyuncu
+        b = set()
+        for oid, ad in liste:
+            t = _ad_anahtar(ad).split()
+            ilk = adlar[0] if adlar else bas
+            if (soyad and len(t) > len(soyad) and t[-len(soyad):] == soyad
+                    and (t[0].startswith(ilk) or ilk.startswith(t[0]))):  # Nic ~ Nicolas, A.J. ~ Aj
+                b.add(oid)
+        return b.pop() if len(b) == 1 else None
+
+    return tam(adaylar) or kisa(adaylar) or tam(lig_adaylari)
+
+
+_fs_gun = {}  # bu oturumda çekilen Flashscore basketbol günleri
+
+
+def _fs_maclari_bul(maclar, yazdir):
+    """{mac_id: Flashscore maç kimliği} — önce veritabanı, sonra son 7 günün Flashscore listeleri (gün başına 1)."""
+    import flashscore as fs
+    from sofascore import eslestir
+    with sqlite3.connect(DB) as con:
+        _tablolar(con)
+        bilinen = dict(con.execute("SELECT mac_id, fs_id FROM nba_fs_mac").fetchall())
+    sonuc = {m.mac_id: bilinen[m.mac_id] for m in maclar.itertuples() if m.mac_id in bilinen}
+    simdi = datetime.now(timezone.utc).timestamp()
+    eksik = [m for m in maclar.itertuples() if m.mac_id not in sonuc and simdi - m.ts < 6.5 * 86400]
+    if not eksik:
+        return sonuc
+    gunler = {datetime.fromtimestamp(m.ts, mk.TZ).date() for m in eksik}
+    for g in sorted(gunler - set(_fs_gun)):
+        _fs_gun[g] = fs.gunler("basketbol", [g], yazdir)
+    parcalar = [_fs_gun[g] for g in gunler if g in _fs_gun and len(_fs_gun[g])]
+    if not parcalar:
+        return sonuc
+    tk = pd.concat(parcalar, ignore_index=True)
+    olaylar = [{"i": m.mac_id, "d": int(m.ts), "hn": m.ev, "an": m.dep} for m in eksik]
+    yeni = {i: r["sofa_id"] for i, r in eslestir(olaylar, tk).items()}
+    with sqlite3.connect(DB) as con:
+        con.executemany("INSERT OR REPLACE INTO nba_fs_mac VALUES (?, ?)", list(yeni.items()))
+    sonuc.update(yeni)
+    return sonuc
+
+
+def _fs_kutu(m, fs_id):
+    """Flashscore kutu skoru -> nba_kutu satırları (Maçkolik oyuncu kimlikleriyle). Veri yoksa boş liste."""
+    import flashscore as fs
+    return _yabanci_kutu(m, fs.kutu_skor(fs_id))
+
+
+def _yabanci_kutu(m, oyuncular):
+    """Flashscore biçimindeki oyuncular (fs_id, ad 'Soyad A.', slug) -> nba_kutu satırları. Maçkolik'te
+    bulunamayan oyuncu geçici kimlik alır (fs_..., sofa_...) ve kadro güncellenince yeniden denenir."""
+    if not oyuncular:
+        return []
+    with sqlite3.connect(DB) as con:
+        _tablolar(con)
+        bilinen = dict(con.execute("SELECT fs_id, oyuncu_id FROM nba_fs_oyuncu").fetchall())
+        tum = pd.concat([pd.read_sql("SELECT oyuncu_id, oyuncu, takim_id FROM nba_kadro", con),
+                         pd.read_sql("SELECT DISTINCT oyuncu_id, oyuncu, takim_id FROM nba_kutu", con)],
+                        ignore_index=True)
+    tum = tum[~tum["oyuncu_id"].str.startswith(("fs_", "sofa_"))]
+    # Görünen ad: kutu skordaki (Maçkolik maçlarıyla aynı ad), yoksa kadrodaki
+    lig = list(tum.drop_duplicates("oyuncu_id", keep="last")[["oyuncu_id", "oyuncu"]]
+               .itertuples(index=False, name=None))
+    satirlar, yeni_eslesme = [], []
+    for o in oyuncular:
+        tid = m.ev_id if o["taraf"] == 1 else m.dep_id
+        oid = bilinen.get(o["fs_id"])
+        if not oid or oid.startswith(("fs_", "sofa_")):
+            takimdaki = list(tum.loc[tum["takim_id"] == tid, ["oyuncu_id", "oyuncu"]]
+                             .itertuples(index=False, name=None))
+            gecici = o["fs_id"] if o["fs_id"].startswith("sofa_") else f"fs_{o['fs_id']}"
+            oid = fs_oyuncu_esle(o, takimdaki, lig) or oid or gecici
+            yeni_eslesme.append((o["fs_id"], oid, _fs_tam_ad(o)))
+        ad = dict(lig).get(oid) or _fs_tam_ad(o)
+        satirlar.append({"mac_id": m.mac_id, "takim_id": tid, "oyuncu_id": oid, "oyuncu": ad,
+                         **{k: o[k] for k in ("ilk5", "sira", "sn", "sayi", "rib", "ast", "iki_i", "iki_a", "uc_i",
+                                              "uc_a", "sa_i", "sa_a", "faul", "blok", "tc", "tk")}})
+    with sqlite3.connect(DB) as con:
+        con.executemany("INSERT OR REPLACE INTO nba_fs_oyuncu VALUES (?, ?, ?)", yeni_eslesme)
+    return satirlar
+
+
+_sofa_gun = {}  # bu oturumda çekilen SofaScore turnuva günleri
+
+
+def _sofa_maclari_bul(maclar, yazdir):
+    """{mac_id: SofaScore maç kimliği} — önce veritabanı, sonra turnuvanın günlük listesi (gün başına 1 istek)."""
+    import sofascore as sofa
+    from sofascore import eslestir
+    with sqlite3.connect(DB) as con:
+        _tablolar(con)
+        bilinen = dict(con.execute("SELECT mac_id, sofa_id FROM nba_sofa_mac").fetchall())
+    sonuc = {m.mac_id: bilinen[m.mac_id] for m in maclar.itertuples() if m.mac_id in bilinen}
+    eksik = [m for m in maclar.itertuples() if m.mac_id not in sonuc]
+    if not eksik:
+        return sonuc
+    gunler = {datetime.fromtimestamp(m.ts, timezone.utc).date() for m in eksik}
+    for g in sorted(gunler - set(_sofa_gun)):
+        _sofa_gun[g] = sofa.turnuva_maclari(SOFA_TURNUVA, g.isoformat())
+    parcalar = [_sofa_gun[g] for g in gunler if len(_sofa_gun.get(g, []))]
+    if not parcalar:
+        return sonuc
+    tk = pd.concat(parcalar, ignore_index=True).drop_duplicates("sofa_id")
+    olaylar = [{"i": m.mac_id, "d": int(m.ts), "hn": m.ev, "an": m.dep} for m in eksik]
+    yeni = {i: int(r["sofa_id"]) for i, r in eslestir(olaylar, tk).items()}
+    with sqlite3.connect(DB) as con:
+        con.executemany("INSERT OR REPLACE INTO nba_sofa_mac VALUES (?, ?)", list(yeni.items()))
+    sonuc.update(yeni)
+    return sonuc
+
+
+def _sofa_kutu(m, sofa_id):
+    """SofaScore kutu skoru -> nba_kutu satırları. Oyuncu adları tam ('Kyshawn George'): Flashscore biçimine
+    çevrilip aynı eşleştiriciyle Maçkolik oyuncularına bağlanır."""
+    import sofascore as sofa
+    oyuncular = sofa.kutu_skor(sofa_id)
+    for o in oyuncular:
+        ad = o["ad"].split()
+        soyad = " ".join(ad[1:]) if len(ad) > 1 else o["ad"]
+        o["fs_id"] = f"sofa_{o['sofa_oyuncu_id']}"
+        o["slug"] = "-".join(_ad_anahtar(soyad).split() + (_ad_anahtar(ad[0]).split() if len(ad) > 1 else []))
+        o["ad"] = f"{soyad} {ad[0][:1]}." if len(ad) > 1 else o["ad"]
+    return _yabanci_kutu(m, oyuncular)
+
+
+def _mk_kutu(m):
+    veri = mk.sayfa_al(KUTU_URL, {"matchId": m.mac_id}, json_mi=True)
+    gorunum = ((veri or {}).get("data") or {}).get("views") or {}
+    satirlar = []
+    for taraf, tid in (("home", m.ev_id), ("away", m.dep_id)):
+        for s_ in kutu_ayristir((gorunum.get(taraf) or {}).get("html")):
+            satirlar.append({"mac_id": m.mac_id, "takim_id": tid, **s_})
+    return satirlar
+
+
+def fs_oyunculari_yeniden_esle():
+    """Kadro güncellendikten sonra Maçkolik'te bulunamayan (fs_...) oyuncuları yeniden bağlamayı dener."""
+    with sqlite3.connect(DB) as con:
+        _tablolar(con)
+        acik = pd.read_sql("SELECT DISTINCT k.oyuncu_id, k.takim_id, f.fs_id, f.oyuncu FROM nba_kutu k "
+                           "JOIN nba_fs_oyuncu f ON f.oyuncu_id = k.oyuncu_id "
+                           "WHERE k.oyuncu_id LIKE 'fs_%' OR k.oyuncu_id LIKE 'sofa_%'", con)
+        if acik.empty:
+            return 0
+        kadro = pd.read_sql("SELECT oyuncu_id, oyuncu, takim_id FROM nba_kadro", con)
+        n = 0
+        for r in acik.itertuples():
+            # kayıtlı ad 'Royce O'Neale' -> Flashscore biçimi ('O'Neale R.', 'o-neale-royce')
+            ad = r.oyuncu.split()
+            if len(ad) < 2:
+                continue
+            soyad = " ".join(ad[1:])
+            o = {"ad": f"{soyad} {ad[0][:1]}.",
+                 "slug": "-".join(_ad_anahtar(soyad).split() + _ad_anahtar(ad[0]).split())}
+            adaylar = list(kadro.loc[kadro["takim_id"] == r.takim_id, ["oyuncu_id", "oyuncu"]]
+                           .itertuples(index=False, name=None))
+            yeni = fs_oyuncu_esle(o, adaylar)
+            if yeni:
+                ad_yeni = kadro.loc[kadro["oyuncu_id"] == yeni, "oyuncu"].iloc[0]
+                con.execute("DELETE FROM nba_kutu WHERE oyuncu_id = ? AND mac_id IN "
+                            "(SELECT mac_id FROM nba_kutu WHERE oyuncu_id = ?)", (yeni, r.oyuncu_id))
+                con.execute("UPDATE nba_kutu SET oyuncu_id = ?, oyuncu = ? WHERE oyuncu_id = ?",
+                            (yeni, ad_yeni, r.oyuncu_id))
+                con.execute("UPDATE nba_fs_oyuncu SET oyuncu_id = ? WHERE fs_id = ?", (yeni, r.fs_id))
+                n += 1
+    return n
+
+
 def guncelle(yazdir=print, ilerleme=None, hazirlik=False, kadro_zorla=False):
     """Maçkolik arşivini günceller; ligin yeni maçlarının kutu skorlarını ve takım kadrolarını çeker."""
     import basketbol
@@ -186,42 +411,96 @@ def guncelle(yazdir=print, ilerleme=None, hazirlik=False, kadro_zorla=False):
     adlar = {**dict(zip(maclar["ev_id"], maclar["ev"])), **dict(zip(maclar["dep_id"], maclar["dep"]))}
     simdi = datetime.now()
     slug = {t: takim.loc[t, "slug"] for t in adlar if t in takim.index and isinstance(takim.loc[t, "slug"], str)}
+    import flashscore as fs
+    import sofascore as sofa
+    mk_engel = False
     try:
-        # Kutu skorlar
+        # Kutu skorlar: Maçkolik, Flashscore ve SofaScore arasında üçe bölünür (biri olmazsa diğerleri)
         yeni = maclar[~maclar["mac_id"].isin(alinan | yok)].sort_values("ts")
         if len(yeni):
-            yazdir(f"Kutu skor: {len(yeni)} yeni maç çekilecek (maç başına 1 istek).")
+            yazdir(f"Kutu skor: {len(yeni)} yeni maç çekilecek (maç başına 1 istek; maçlar Maçkolik, Flashscore "
+                   "ve SofaScore arasında paylaştırılır).")
         elif len(maclar):
             son = datetime.fromtimestamp(int(maclar["ts"].max()), mk.TZ).strftime("%d.%m %H:%M")
             yazdir(f"Kutu skorlar güncel: yeni biten {BASLIK} maçı yok (arşivdeki son maç {son}). Maçlar bitip "
                    "Maçkolik'e düştükten sonra yeniden güncelleyin.")
+        kimlik = {"Flashscore": {}, "SofaScore": {}}
+        bulucu = {"Flashscore": _fs_maclari_bul, "SofaScore": _sofa_maclari_bul}
+        engel_sinifi = {"Flashscore": fs.FlashscoreEngel, "SofaScore": sofa.SofaEngel}
+        kapali = {"Maçkolik": lambda: mk_engel, "Flashscore": fs.engelli_mi, "SofaScore": sofa.engelli_mi}
+
+        def kimlik_bul(k, secim):
+            """k sitesindeki maç kimlikleri (günlük liste; gün başına 1 istek, oturumda bir kez)."""
+            if kapali[k]() or not len(secim):
+                return
+            try:
+                kimlik[k].update(bulucu[k](secim, yazdir))
+            except engel_sinifi[k] as hata:
+                yazdir(f"⚠ {hata}")
+            except Exception as hata:
+                yazdir(f"{k} maç listesi alınamadı: {hata}")
+
+        if len(yeni):
+            for k in ("Flashscore", "SofaScore"):
+                kimlik_bul(k, yeni[yeni["mac_id"].map(ilk_kaynak) == k])
+        sayac = dict.fromkeys(KAYNAKLAR, 0)
+        bakilan = set()  # (site, maç): kimliği bu oturumda arandı
         for i, m in enumerate(yeni.itertuples(), 1):
-            veri = mk.sayfa_al(KUTU_URL, {"matchId": m.mac_id}, json_mi=True)
-            gorunum = ((veri or {}).get("data") or {}).get("views") or {}
-            satirlar = []
-            for taraf, tid in (("home", m.ev_id), ("away", m.dep_id)):
-                for s in kutu_ayristir((gorunum.get(taraf) or {}).get("html")):
-                    satirlar.append({"mac_id": m.mac_id, "takim_id": tid, **s})
+            ilk = ilk_kaynak(m.mac_id)
+            sira = [ilk] + [k for k in KAYNAKLAR if k != ilk]
+            satirlar, kaynak = [], None
+            for k in sira:
+                if kapali[k]():
+                    continue
+                try:
+                    if k == "Maçkolik":
+                        satirlar = _mk_kutu(m)
+                    else:
+                        if m.mac_id not in kimlik[k] and (k, m.mac_id) not in bakilan:
+                            bakilan.add((k, m.mac_id))
+                            kimlik_bul(k, yeni[yeni["mac_id"] == m.mac_id])
+                        if m.mac_id in kimlik[k]:
+                            satirlar = (_fs_kutu if k == "Flashscore" else _sofa_kutu)(m, kimlik[k][m.mac_id])
+                except mk.MackolikEngel as hata:
+                    if not mk_engel:
+                        yazdir(f"⚠ {hata} Kalan maçlar diğer sitelerden denenecek.")
+                    mk_engel = True
+                except (fs.FlashscoreEngel, sofa.SofaEngel) as hata:
+                    yazdir(f"⚠ {hata}")
+                except Exception as hata:
+                    yazdir(f"  {k} kutu skor hatası ({m.ev} - {m.dep}): {hata}")
+                if satirlar:
+                    kaynak = k
+                    break
             with sqlite3.connect(DB) as con:
                 _tablolar(con)
                 if satirlar:
+                    sayac[kaynak] += 1
                     pd.DataFrame(satirlar).to_sql("_yeni", con, if_exists="replace", index=False)
                     con.execute("INSERT OR REPLACE INTO nba_kutu SELECT mac_id, takim_id, oyuncu_id, oyuncu, ilk5, "
                                 "sira, sn, sayi, rib, ast, iki_i, iki_a, uc_i, uc_a, sa_i, sa_a, faul, blok, tc, tk "
                                 "FROM _yeni")
                     con.execute("DROP TABLE _yeni")
-                elif (datetime.now(timezone.utc).timestamp() - m.ts) > 86400:
+                    con.execute("INSERT OR REPLACE INTO nba_kutu_kaynak VALUES (?, ?)", (m.mac_id, kaynak))
+                elif not mk_engel and (datetime.now(timezone.utc).timestamp() - m.ts) > 86400:
                     con.execute("INSERT OR IGNORE INTO nba_kutu_yok VALUES (?)", (m.mac_id,))
             if ilerleme:
                 ilerleme("kutu", i, len(yeni))
             if i % 10 == 0 or i == len(yeni):
-                yazdir(f"  [{i}/{len(yeni)}] maç")
+                yazdir(f"  [{i}/{len(yeni)}] maç (" + ", ".join(f"{k} {v}" for k, v in sayac.items()) + ")")
+            if all(f() for f in kapali.values()):
+                yazdir("Üç site de şu an istekleri reddediyor; kalan maçlar sonraki güncellemede çekilir.")
+                break
+        if mk_engel:
+            raise mk.MackolikEngel("")  # kadrolar bu sefer atlanır (mesaj yukarıda yazıldı)
 
         # Kadrolar
         with sqlite3.connect(DB) as con:
             kadrolu = {r[0] for r in con.execute("SELECT oyuncu_id FROM nba_kadro")}
             yeni_oyuncu = {r[0] for r in con.execute("SELECT DISTINCT takim_id FROM nba_kutu WHERE oyuncu_id NOT IN "
-                                                     "(SELECT oyuncu_id FROM nba_kadro)")} if kadrolu else set()
+                                                     "(SELECT oyuncu_id FROM nba_kadro) AND oyuncu_id NOT LIKE 'fs_%' "
+                                                     "AND oyuncu_id NOT LIKE 'sofa_%'")} \
+                if kadrolu else set()
 
         def cekim(t):
             v = takim.loc[t, "kadro_cekim"] if t in takim.index else None
@@ -250,10 +529,16 @@ def guncelle(yazdir=print, ilerleme=None, hazirlik=False, kadro_zorla=False):
                                  for k in kadro])
             if ilerleme:
                 ilerleme("kadro", i, len(eski))
+        if eski:
+            n = fs_oyunculari_yeniden_esle()
+            if n:
+                yazdir(f"Flashscore'dan gelen {n} oyuncu güncel kadrolarla eşleştirildi.")
 
     except mk.MackolikEngel as hata:
-        yazdir(f"⚠ {hata}")
-    yazdir(f"Bitti. Maçkolik'e toplam {mk.istek_sayisi()} istek gönderildi.")
+        if str(hata):
+            yazdir(f"⚠ {hata}")
+    yazdir(f"Bitti. Maçkolik'e {mk.istek_sayisi()}, Flashscore'a {fs.istek_sayisi()}, SofaScore'a "
+           f"{sofa.istek_sayisi()} istek gönderildi.")
 
 
 def isimle_esle(olaylar):

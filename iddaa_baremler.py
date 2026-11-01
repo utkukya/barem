@@ -402,6 +402,28 @@ def kupa_mi(yarisma_adi):
     return bool(yarisma_adi) and bool(KUPA_DESENI.search(tr_kucuk(str(yarisma_adi))))
 
 
+# Hiç taranmayan maçlar (futbol ve basketbol): U19, U20, U21, U23 maçları ve Venezuela ligleri
+HARIC_ULKE = {"VE"}
+HARIC_ULKE_ADI = re.compile(r"venezuela", re.I)
+HARIC_GENC = re.compile(r"\bu[-\s]?(19|20|21|23)\b", re.I)
+
+
+def istenmeyenleri_cikar(olaylar, adlar, yazdir=None):
+    """U19/U20/U21/U23 maçlarını ve Venezuela liglerini listeden çıkarır."""
+    kalan, genc, ven = [], 0, 0
+    for e in olaylar:
+        ad, kod, ulke = (list(adlar.get(e.get("ci"), ())) + [None, None, None])[:3]
+        if HARIC_GENC.search(" ".join(str(x) for x in (ad, e.get("hn"), e.get("an")) if x)):
+            genc += 1
+        elif (kod or "").upper() in HARIC_ULKE or HARIC_ULKE_ADI.search(f"{ad or ''} {ulke or ''}"):
+            ven += 1
+        else:
+            kalan.append(e)
+    if (genc or ven) and yazdir:
+        yazdir(f"Taranmayan maçlar: {genc} gençlik (U19/U20/U21/U23) maçı, {ven} Venezuela ligi maçı.")
+    return kalan
+
+
 def kupalari_cikar(olaylar, adlar, yazdir=None):
     """Kupa yarışmalarının maçlarını listeden çıkarır."""
     kalan, cikan = [], {}
@@ -548,7 +570,8 @@ def _tablolari_yaz(bulten, satirlar, cekilme, gun, buyuk5, toplam):
 
 def guncelle(gun=0, ham_dosya=None, yazdir=print, ligler="hepsi", takim_verisi="akilli", ilerleme=None):
     """iddaa'da açık maçları, oranlarını ve baremlerini çeker. Takımların son maçları (skor, ilk yarı) Maçkolik'in
-    günlük sonuç arşivinden; korner/kart/şut istatistikleri yalnızca gereken maçlar için Ofsayt.com'dan gelir.
+    günlük sonuç arşivinden; korner/kart/şut istatistikleri yalnızca gereken maçlar için Ofsayt.com, Flashscore ve SofaScore'dan
+    gelir (takımlar üç site arasında paylaştırılır; bir takım hep aynı siteden çekilir).
     (barem satırı sayısı, verisi bulunamayan takımlar, tanınmayan pazarlar) döner.
 
     gun: 0 -> bugün (gece yarısına kadar), N -> önümüzdeki N gün.
@@ -571,6 +594,7 @@ def guncelle(gun=0, ham_dosya=None, yazdir=print, ligler="hepsi", takim_verisi="
         kume = set(ligler or VARSAYILAN_LIGLER)
         secili = [e for e in zamanda if e.get("ci") in kume]
     secili = kupalari_cikar(secili, adlar, yazdir)
+    secili = istenmeyenleri_cikar(secili, adlar, yazdir)
     secili.sort(key=lambda e: e.get("d", 0))
     buyuk5 = sum(1 for e in secili if e.get("ci") in LIGLER)
     donem = "bugün" if gun <= 0 else f"önümüzdeki {gun} günde"
@@ -615,38 +639,15 @@ def guncelle(gun=0, ham_dosya=None, yazdir=print, ligler="hepsi", takim_verisi="
             yazdir(f"Maçkolik'e bağlanılamadı: {hata}")
     mk_adlar = mk.takim_adlari(DB, "futbol")
 
-    # 3) Ofsayt: yalnızca istatistik (korner, kart, şut...) gereken maçlar — iddaa'nın istatistik pazarı açtığı
-    #    maçlar ve büyük ligler ("tam" modda tüm maçlar). Diğer maçlar Ofsayt'a hiç istek göndermez.
+    # 3) Ofsayt + Flashscore + SofaScore: yalnızca istatistik (korner, kart, şut...) gereken maçlar — iddaa'nın istatistik
+    #    pazarı açtığı maçlar ve büyük ligler ("tam" modda tüm maçlar). Diğer maçlar bu sitelere istek göndermez.
     def istatistik_gerekli(e):
         buyuk = e.get("ci") in LIGLER or e.get("ci") in KUPALAR
         return mod == "tam" or (mod == "akilli" and (bilgiler[e["i"]]["stat_pazari"] or buyuk))
 
     ist_maclar = [e for e in secili if istatistik_gerekli(e)]
-    ofs, eslesme = None, {}
-    if ist_maclar:
-        import ofsayt as _o
-        from sofascore import eslestir  # ad + saat eşleştirici (ağa çıkmaz)
-        try:
-            ofs = _o
-            # Önce daha önce eşleşen takımlar (istek yok); günlük liste (gün başına ~7 MB) yalnızca eşleşmeyen
-            # maçların günleri için çekilir
-            _o.hafizadan_esle(ist_maclar, eslesme)
-            eksik = [e for e in ist_maclar if e["i"] not in eslesme]
-            if eksik:
-                tk = ofs.gunler(sorted({datetime.fromtimestamp(e["d"], TZ).date() for e in eksik}), yazdir)
-                yeni = eslestir(eksik, tk)
-                eslesme.update(yeni)
-                ofs.hafiza_yaz(yeni, eksik)
-            yazdir(f"İstatistik gereken {len(ist_maclar)} maçın {len(eslesme)} tanesi Ofsayt'ta eşleşti "
-                   f"({len(ist_maclar) - len(eksik)} tanesi önceki eşleşmelerden).")
-        except _o.OfsaytEngel as hata:
-            yazdir(f"⚠ {hata} Bu maçlarda gol baremleri Maçkolik verisiyle çalışır; korner/kart/şut "
-                   "baremleri için önceki istatistikler kullanılır.")
-            ofs = None
-        except Exception as hata:
-            yazdir(f"Ofsayt'a bağlanılamadı, istatistikler güncellenmeyecek: {hata}")
-            ofs = None
-        _o.hafizadan_esle(ist_maclar, eslesme)  # daha önce eşleşen takımlar (liste alınamadıysa da)
+    eslesme, durum = (istatistik_eslesmesi(ist_maclar, yazdir, lambda e: adlar.get(e.get("ci"), (None, None))[1])
+                      if ist_maclar else ({}, {}))
 
     with sqlite3.connect(DB) as con:
         takimlar = guncel_takimlar(con)
@@ -658,16 +659,22 @@ def guncelle(gun=0, ham_dosya=None, yazdir=print, ligler="hepsi", takim_verisi="
             return esles(iddaa_adi, takimlar.get(LIGLER[ci], []), elle)
         return esles(iddaa_adi, tum_takimlar, elle, gevsek=False)
 
-    def satirlari_kur(ad_haritasi):
-        """ad_haritasi: {ofsayt takım id: veritabanı adı}"""
+    def satirlari_kur(ad_haritasi, veri_adlari=None):
+        """ad_haritasi: {Ofsayt/Flashscore/SofaScore takım id: veritabanı adı}; veri_adlari: maclar'daki takım adları"""
         bulten, satirlar = [], []
         for e in secili:
             b, s, k = bilgiler[e["i"]], eslesme.get(e["i"]), mk_eslesme.get(e["i"])
             ci = e.get("ci")
-            if s is not None:  # istatistikli: Ofsayt adları (maçlar tablosundaki istatistikli satırlar)
+            if s is not None:  # istatistikli: Ofsayt/Flashscore/SofaScore adları (maçlar tablosundaki satırlar)
                 ev = ad_haritasi.get(s["ev_id"], s["ev"])
                 dep = ad_haritasi.get(s["dep_id"], s["dep"])
-                kaynak = "Ofsayt + Maçkolik"
+                kaynak = " / ".join(sorted({KAYNAK_ADI[s[t + "_k"]] for t in ("ev", "dep")})) + " + Maçkolik"
+                if k is not None and veri_adlari is not None:
+                    # istatistik sitesinden henüz veri gelmediyse (site reddetti ya da hata) Maçkolik verisi kullanılır
+                    if ev not in veri_adlari:
+                        ev = mk_adlar.get(k["ev_id"], k["ev"])
+                    if dep not in veri_adlari:
+                        dep = mk_adlar.get(k["dep_id"], k["dep"])
             elif k is not None:  # Maçkolik arşivi
                 ev, dep = mk_adlar.get(k["ev_id"], k["ev"]), mk_adlar.get(k["dep_id"], k["dep"])
                 kaynak = "Maçkolik"
@@ -695,31 +702,25 @@ def guncelle(gun=0, ham_dosya=None, yazdir=print, ligler="hepsi", takim_verisi="
     _tablolari_yaz(bulten, satirlar, cekilme, gun, buyuk5, len(secili))
     yazdir(f"{len(bulten)} maç ve {len(satirlar)} barem kaydedildi.")
 
-    # 5) Ofsayt istatistikleri (yalnızca istatistik gereken maçların takımları)
-    ad_haritasi = {}
+    # 5) İstatistikler (yalnızca istatistik gereken maçların takımları): her takım kendi kaynağından
+    ad_haritasi = takim_istatistiklerini_guncelle(eslesme, durum, yazdir, ilerleme)
     if eslesme:
-        import ofsayt as _o
-        istekler = {s_[k + "_id"]: s_[k] for s_ in eslesme.values() for k in ("ev", "dep")}
-        if ofs is None:  # liste alınamadı / engel: yalnızca veritabanındaki adlar
-            with sqlite3.connect(DB) as con:
-                _o._tablolar(con)
-                ad_haritasi = {r[0]: r[1] for r in con.execute("SELECT takim_id, takim FROM ofsayt_takim")}
-        else:
-            yazdir(f"Ofsayt: {len(istekler)} takımın istatistikleri güncellenecek "
-                   f"(diğer {max(0, len(secili) - len(eslesme)) * 2} takım yalnızca Maçkolik'ten).")
-            try:
-                ad_haritasi = ofs.takimlari_guncelle(
-                    istekler, yazdir=yazdir, ilerleme=(lambda i, n: ilerleme("takım", i, n)) if ilerleme else None)
-            except _o.OfsaytEngel as hata:
-                yazdir(f"⚠ {hata}")
-            except Exception as hata:
-                yazdir(f"Takım istatistikleri tamamlanamadı: {hata}")
-            with sqlite3.connect(DB) as con:
-                ad_haritasi = {**{r[0]: r[1] for r in con.execute("SELECT takim_id, takim FROM ofsayt_takim")},
-                               **ad_haritasi}
+        yazdir(f"(Diğer {max(0, len(secili) - len(eslesme)) * 2} takım yalnızca Maçkolik'ten.)")
 
-    bulten, satirlar = satirlari_kur(ad_haritasi)
+    with sqlite3.connect(DB) as con:
+        try:
+            veri_adlari = {r[0] for r in con.execute("SELECT DISTINCT takim FROM maclar")}
+        except sqlite3.Error:
+            veri_adlari = set()
+    bulten, satirlar = satirlari_kur(ad_haritasi, veri_adlari)
     df = _tablolari_yaz(bulten, satirlar, cekilme, gun, buyuk5, len(secili))
+
+    # Veritabanı şişmesin: her takımın yalnızca son 10 maçı kalır (yeni maç geldikçe en eskisi silinir)
+    import db_olustur
+    silinen = db_olustur.tabloyu_kirp(DB)
+    if silinen:
+        yazdir(f"Takımların son {db_olustur.TUTULAN_MAC} maçından eski {silinen} satır silindi.")
+    db_olustur.sikistir(DB)
 
     with sqlite3.connect(DB) as con:
         bilinen = {r[0] for r in con.execute("SELECT DISTINCT takim FROM maclar")} | set(mk_adlar.values())
@@ -732,6 +733,183 @@ def guncelle(gun=0, ham_dosya=None, yazdir=print, ligler="hepsi", takim_verisi="
     elif eslesmeyen:
         yazdir(f"{len(eslesmeyen)} takımın verisi bulunamadı (çoğu alt lig / amatör takım ya da arşivde henüz maçı yok).")
     return len(df), eslesmeyen, sorted(taninmayan)
+
+
+KAYNAK_ADI = {"ofsayt": "Ofsayt", "flashscore": "Flashscore", "sofascore": "SofaScore"}
+
+
+def istatistik_eslesmesi(ist_maclar, yazdir=print, ulke_kodu=lambda e: None):
+    """İstatistik gereken iddaa maçlarının takımlarını Ofsayt, Flashscore ya da SofaScore takımlarıyla eşleştirir.
+    İş bölümü: daha önce eşleşen takım hep aynı siteden çekilir (istek yok). Yeni takımlar o sırada daha az takım
+    çekilecek siteye verilir; o sitenin günlük listesinde bulunamayan maç diğer sitede aranır.
+    ({iddaa id: {"ev", "ev_id", "ev_k", "ev_slug", "dep", ...}}, {kaynak: kullanılabilir mi}) döner."""
+    import flashscore as fs
+    import flashscore_futbol as fsf
+    import ofsayt as ofs
+    import sofascore as sofa
+    from sofascore import eslestir
+    with sqlite3.connect(DB) as con:
+        ofs._tablolar(con)
+        oh = {r[0]: (r[1], r[2]) for r in con.execute("SELECT * FROM ofsayt_eslesme")}
+    fh = fsf.hafiza()
+    sh = sofa.atama_hafizasi()
+    sofa_eski = sofa.eski_eslesmeler()  # eski SofaScore dönemi: takvim isteği olmadan eşleşme için
+    durum = {"ofsayt": not ofs.engelli_mi(), "flashscore": not fs.engelli_mi(), "sofascore": not sofa.engelli_mi()}
+
+    def taraf(ad):
+        if ad in oh:
+            return {"k": "ofsayt", "id": oh[ad][0], "ad": oh[ad][1], "slug": None}
+        if ad in fh:
+            return {"k": "flashscore", "id": fh[ad][0], "ad": fh[ad][1], "slug": fh[ad][2]}
+        if ad in sh:
+            return {"k": "sofascore", "id": sh[ad][0], "ad": sh[ad][1], "slug": None}
+        return None
+
+    def kur(e, ev, dep):
+        return {"sofa_id": None, "ts": e["d"], **{f"{t}{'' if a == 'ad' else '_' + a}": v
+                                                   for t, x in (("ev", ev), ("dep", dep)) for a, v in x.items()}}
+
+    eslesme, eksik, yuk = {}, [], dict.fromkeys(KAYNAK_ADI, 0)
+    for e in ist_maclar:
+        ev, dep = taraf(e["hn"]), taraf(e["an"])
+        for x in (ev, dep):
+            if x:
+                yuk[x["k"]] += 1
+        if ev and dep:
+            eslesme[e["i"]] = kur(e, ev, dep)
+        else:
+            eksik.append(e)
+    onceki = len(eslesme)
+
+    def listeler(k, olaylar):
+        if k == "sofascore":  # yalnızca bu maçların ülkelerinin (ve uluslararası) takvimleri
+            return sofa.takvim(min(e["d"] for e in olaylar), max(e["d"] for e in olaylar),
+                               {ulke_kodu(e) for e in olaylar}, yazdir)
+        gunler = sorted({datetime.fromtimestamp(e["d"], TZ).date() for e in olaylar})
+        return ofs.gunler(gunler, yazdir) if k == "ofsayt" else fs.gunler("futbol", gunler, yazdir)
+
+    def dene(k, olaylar):
+        """k sitesinin günlük listelerinde arar; bulunamayanları döner."""
+        try:
+            tk = listeler(k, olaylar)
+        except (ofs.OfsaytEngel, fs.FlashscoreEngel, sofa.SofaEngel) as hata:
+            yazdir(f"⚠ {hata}")
+            durum[k] = False
+            return olaylar
+        except Exception as hata:
+            yazdir(f"{KAYNAK_ADI[k]} listesi alınamadı: {hata}")
+            return olaylar
+        bulunan = eslestir(olaylar, tk)
+        kayit_o, kayit_f, kayit_s = [], [], []
+        for e in olaylar:
+            r = bulunan.get(e["i"])
+            if r is None:
+                continue
+            yan = {}
+            for t, ad in (("ev", e["hn"]), ("dep", e["an"])):
+                yan[t] = taraf(ad) or {"k": k, "id": r[t + "_id"], "ad": r[t], "slug": r.get(t + "_slug")}
+                if taraf(ad) is None:
+                    {"ofsayt": kayit_o, "flashscore": kayit_f, "sofascore": kayit_s}[k].append(
+                        (ad, r[t + "_id"], r[t], r.get(t + "_slug")))
+            eslesme[e["i"]] = kur(e, yan["ev"], yan["dep"])
+        if kayit_o:
+            with sqlite3.connect(DB) as con:
+                con.executemany("INSERT OR REPLACE INTO ofsayt_eslesme VALUES (?, ?, ?)", [x[:3] for x in kayit_o])
+            oh.update({x[0]: (x[1], x[2]) for x in kayit_o})
+        if kayit_f:
+            fsf.hafiza_yaz(kayit_f)
+            fh.update({x[0]: (x[1], x[2], x[3]) for x in kayit_f})
+        if kayit_s:
+            sofa.atama_yaz([x[:3] for x in kayit_s])
+            sh.update({x[0]: (int(x[1]), x[2]) for x in kayit_s})
+        return [e for e in olaylar if e["i"] not in bulunan]
+
+    def sofa_eskiden(olaylar):
+        """SofaScore'a verilen maçlar: iki takım da eski SofaScore kayıtlarında varsa takvim isteği yok."""
+        kalan, kayit = [], []
+        for e in olaylar:
+            yan = {}
+            for t, ad in (("ev", e["hn"]), ("dep", e["an"])):
+                yan[t] = taraf(ad) or ({"k": "sofascore", "id": sofa_eski[ad][0], "ad": sofa_eski[ad][1],
+                                        "slug": None} if ad in sofa_eski else None)
+            if yan["ev"] and yan["dep"]:
+                eslesme[e["i"]] = kur(e, yan["ev"], yan["dep"])
+                kayit += [(ad, yan[t]["id"], yan[t]["ad"]) for t, ad in (("ev", e["hn"]), ("dep", e["an"]))
+                          if taraf(ad) is None]
+            else:
+                kalan.append(e)
+        if kayit:
+            sofa.atama_yaz(kayit)
+            sh.update({a: (int(i), n) for a, i, n in kayit})
+        return kalan
+
+    if eksik:
+        plan = {k: [] for k in KAYNAK_ADI}
+        for e in eksik:
+            acik = [k for k in plan if durum[k]] or list(plan)
+            k = min(acik, key=lambda k: yuk[k])
+            yuk[k] += sum(taraf(a) is None for a in (e["hn"], e["an"]))
+            plan[k].append(e)
+        if plan["sofascore"] and durum["sofascore"]:
+            plan["sofascore"] = sofa_eskiden(plan["sofascore"])
+        kalan = []
+        for k, liste in plan.items():
+            if liste and durum[k]:
+                kalan += [(e, k) for e in dene(k, liste)]
+            elif liste:
+                kalan += [(e, k) for e in liste]
+        # bir sitede bulunamayan maç diğer sitelerde (sırayla) aranır
+        for diger in KAYNAK_ADI:
+            liste = [e for e, k in kalan if k != diger and e["i"] not in eslesme]
+            if liste and durum[diger]:
+                dene(diger, liste)
+    sayi = {k: sum(1 for s_ in eslesme.values() for t in ("ev", "dep") if s_[t + "_k"] == k) for k in KAYNAK_ADI}
+    yazdir(f"İstatistik gereken {len(ist_maclar)} maçın {len(eslesme)} tanesi eşleşti ({onceki} tanesi önceki "
+           f"eşleşmelerden). Takımlar: " + ", ".join(f"{KAYNAK_ADI[k]} {v}" for k, v in sayi.items()) + ".")
+    return eslesme, durum
+
+
+def takim_istatistiklerini_guncelle(eslesme, durum, yazdir=print, ilerleme=None):
+    """Eşleşen takımların son maç istatistiklerini kendi kaynaklarından çeker. {kaynak takım id: db adı} döner."""
+    import flashscore as fs
+    import flashscore_futbol as fsf
+    import ofsayt as ofs
+    import sofascore as sofa
+    ofs_istek = {s_[t + "_id"]: s_[t] for s_ in eslesme.values() for t in ("ev", "dep") if s_[t + "_k"] == "ofsayt"}
+    fs_istek = {s_[t + "_id"]: (s_[t], s_[t + "_slug"]) for s_ in eslesme.values() for t in ("ev", "dep")
+                if s_[t + "_k"] == "flashscore"}
+    sofa_istek = {int(s_[t + "_id"]): "tam" for s_ in eslesme.values() for t in ("ev", "dep")
+                  if s_[t + "_k"] == "sofascore"}
+    ad_haritasi = {}
+    toplam = len(ofs_istek) + len(fs_istek) + len(sofa_istek)
+    bas = 0
+    for k, istek, fonk, engel in (("ofsayt", ofs_istek, ofs.takimlari_guncelle, ofs.OfsaytEngel),
+                                  ("flashscore", fs_istek, fsf.takimlari_guncelle, fs.FlashscoreEngel),
+                                  ("sofascore", sofa_istek, sofa.takimlari_guncelle, sofa.SofaEngel)):
+        if not istek:
+            continue
+        if not durum.get(k, True):
+            yazdir(f"{KAYNAK_ADI[k]} şu an erişilemiyor: {len(istek)} takım için önceki istatistikler kullanılıyor.")
+            continue
+        try:
+            ad_haritasi.update(fonk(istek, yazdir=yazdir, ilerleme=(
+                (lambda i, n, b=bas: ilerleme("takım", b + i, toplam)) if ilerleme else None)))
+        except engel as hata:
+            yazdir(f"⚠ {hata}")
+        except Exception as hata:
+            yazdir(f"{KAYNAK_ADI[k]} takım istatistikleri tamamlanamadı: {hata}")
+        bas += len(istek)
+    with sqlite3.connect(DB) as con:
+        ofs._tablolar(con)
+        fsf._tablolar(con)
+        sofa._takim_tablosu(con)
+        kayitli = {r[0]: r[1] for r in con.execute("SELECT takim_id, takim FROM ofsayt_takim UNION ALL "
+                                                   "SELECT takim_id, takim FROM fs_takim")}
+        sofa_ids = {int(s_[t + "_id"]) for s_ in eslesme.values() for t in ("ev", "dep")
+                    if s_[t + "_k"] == "sofascore"}
+        kayitli.update({r[0]: r[1] for r in con.execute("SELECT sofascore_id, takim FROM sofa_takim")
+                        if r[0] in sofa_ids})
+    return {**kayitli, **ad_haritasi}
 
 
 ULUSLARARASI_KOD = {None, "", "INT", "WW", "EU"}

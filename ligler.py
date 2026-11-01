@@ -17,6 +17,7 @@ LIGLER = {
         "SEZON_BASLANGIC": "2026-09-01",   # EuroLeague'de hazırlık maçları ayrı yarışma; sezonun tamamı alınır
         "IDDAA_CI": {251000},              # iddaa: "Euroleague"
         "KAMBI_LISTE": "listView/basketball/euroleague.json",
+        "SOFA_TURNUVA": 138,               # SofaScore: Euroleague
     },
 }
 _yuklu = {}

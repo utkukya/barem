@@ -141,6 +141,7 @@ def guncelle(gun=0, ligler="hepsi", yazdir=print, takim_verisi=True, ilerleme=No
         kume = {int(c) for c in ligler}
         secili = [e for e in secili if e.get("ci") in kume]
     secili = ib.kupalari_cikar(secili, adlar, yazdir)
+    secili = ib.istenmeyenleri_cikar(secili, adlar, yazdir)
     secili.sort(key=lambda e: e.get("d", 0))
     donem = "bugün" if gun <= 0 else f"önümüzdeki {gun} günde"
     yazdir(f"iddaa'da {len(olaylar)} basketbol maçı açık; {donem} seçili liglerden {len(secili)} maç taranacak.")
@@ -184,6 +185,11 @@ def guncelle(gun=0, ligler="hepsi", yazdir=print, takim_verisi=True, ilerleme=No
     eksik = [f"{b['lig']}: {b['ev_iddaa']} – {b['dep_iddaa']}" for b in bulten if b["ev_id"] is None]
     if eksik and eslesme:
         yazdir(f"Maçkolik'te bulunamayan {len(eksik)} maç (geçmiş verisi yok):\n  " + "\n  ".join(eksik[:30]))
+    import db_olustur
+    silinen = db_olustur.tabloyu_kirp(DB)  # eski (SofaScore dönemi) takım-maç tablosu da son 10 maçla sınırlı
+    if silinen:
+        yazdir(f"Eski takım tablosundan {silinen} satır silindi (her takımın son {db_olustur.TUTULAN_MAC} maçı kalır).")
+    db_olustur.sikistir(DB)
     yazdir(f"Bitti: {len(bulten)} maç, {len(baremler)} barem.")
     return len(bulten), len(baremler)
 

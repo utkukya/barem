@@ -123,9 +123,9 @@ with pencere:
         default=eski if eski in modlar else "akilli", key="gn_takim",
         help="Goller ve ilk yarı skorları tüm maçlar için Maçkolik'in günlük sonuç arşivinden gelir (ilk seferde "
              "son 45 gün, gün başına 1 istek; sonra yalnızca bugün ve dün). "
-             "Yalnızca skor: Ofsayt'a hiç istek gitmez. "
-             "Akıllı: iddaa'nın korner/kart/şut pazarı açtığı maçlarda ve büyük liglerde istatistikler Ofsayt.com'dan "
-             "çekilir. Tam: tüm maçlarda Ofsayt istatistikleri (uzun sürer). "
+             "Yalnızca skor: Ofsayt/Flashscore/SofaScore'a hiç istek gitmez. "
+             "Akıllı: iddaa'nın korner/kart/şut pazarı açtığı maçlarda ve büyük liglerde istatistikler "
+             "Ofsayt.com, Flashscore ve SofaScore'dan çekilir (takımlar üç site arasında paylaştırılır). Tam: tüm maçlarda istatistikler (uzun sürer). "
              "Son 12 saatte çekilen takımlar tekrar indirilmez.") or "akilli"
     from ortam import guncelleme_izni
     izin = guncelleme_izni("gn")
@@ -435,7 +435,7 @@ with g2:
                       r["Rakip"], izin, rakip_m, r["Çizgi"], r["Yön"])
     else:
         st.markdown(f"**{r['Rakip']}**")
-        st.info("Bu takımın geçmiş maçı veritabanında yok (Maçkolik/Ofsayt'ta bulunamadı ya da takım verisi "
+        st.info("Bu takımın geçmiş maçı veritabanında yok (Maçkolik/Ofsayt/Flashscore'da bulunamadı ya da takım verisi "
                 "çekilmedi); rakip formu ve model hesaplanamadı.")
 st.caption("Turuncu kesikli çizgi: barem. (E) ev, (D) deplasman maçı. "
            "Kupa maçlarında takımların son lig maçlarına bakılır.")

@@ -7,6 +7,7 @@ Kullanım:
     python db_olustur.py yeni_veri.csv --ekle     # var olan veritabanına ekler (aynı maçlar tekrar yazılmaz)
 """
 import argparse
+import re
 import sqlite3
 from pathlib import Path
 
@@ -62,6 +63,84 @@ def sayiya_cevir(df):
     return df
 
 
+TUTULAN_MAC = 10  # her takımın yalnızca son bu kadar maçı saklanır (veritabanı şişmesin)
+
+# Kadın liglerindeki maçlar: takım adına " (K)" eklenir (iddaa ve Maçkolik de böyle yazar). Yoksa SofaScore gibi
+# kaynaklarda "Eintracht Frankfurt" kadın takımının maçları erkek takımının maçlarına karışır.
+KADIN_LIG = re.compile(r"wom[ae]n|frauen|kad[ıi]n|femen|f[ée]minin|feminil|femminil|\bwsl\b|ladies|damallsvenskan|"
+                       r"\bnwsl\b|\(w\)|bayan|\bliga f\b|we[- ]?league|kobiet|kvind|kvinn|naisten|[žz]ensk|n[őo]i\b|"
+                       r"vrouwen|\bdames\b|\bdamen\b|toppserien|elitettan", re.I)
+KADIN_AD = re.compile(r"\(k\)|\bwomen\b|\bkad[ıi]n|\bladies\b|\bfemenin|\bféminin|\bfrauen\b|\s\(?w\)?$", re.I)
+
+
+def _kadin_adi(ad):
+    return ad if not isinstance(ad, str) or KADIN_AD.search(ad) else f"{ad} (K)"
+
+
+def kadin_ayir(df):
+    """Kadın ligi satırlarında takım ve rakip adlarına ' (K)' ekler."""
+    if df.empty or "lig" not in df:
+        return df
+    kadin = df["lig"].fillna("").astype(str).str.contains(KADIN_LIG)
+    if kadin.any():
+        df = df.copy()
+        for k in ("takim", "rakip"):
+            if k in df:
+                df.loc[kadin, k] = df.loc[kadin, k].map(_kadin_adi)
+    return df
+
+
+def kadinlari_ayir_db(db, tablo="maclar"):
+    """Veritabanındaki eski satırlar için kadin_ayir. Değişen satır sayısını döner."""
+    with sqlite3.connect(db) as con:
+        if not con.execute("SELECT name FROM sqlite_master WHERE name = ?", (tablo,)).fetchone():
+            return 0
+        kol = [r[1] for r in con.execute(f'PRAGMA table_info("{tablo}")')]
+        if "lig" not in kol or "takim" not in kol:
+            return 0
+        satir = con.execute(f'SELECT rowid, lig, takim, {"rakip" if "rakip" in kol else "NULL"} FROM "{tablo}"').fetchall()
+        degisen = [(_kadin_adi(t), _kadin_adi(r) if r is not None else None, i) for i, lig, t, r in satir
+                   if lig and KADIN_LIG.search(str(lig)) and _kadin_adi(t) != t]
+        if degisen:
+            if "rakip" in kol:
+                con.executemany(f'UPDATE "{tablo}" SET takim = ?, rakip = ? WHERE rowid = ?', degisen)
+            else:
+                con.executemany(f'UPDATE "{tablo}" SET takim = ? WHERE rowid = ?', [(a, i) for a, _, i in degisen])
+        return len(degisen)
+
+
+def son_n_birak(df, n=TUTULAN_MAC):
+    """Her takımın en yeni n maç gününün satırları (tarihe göre); daha eskiler atılır. Gün sayılır, satır değil:
+    aynı maç iki kaynaktan gelmişse (analizde biri atılır) yer kaplayıp eski bir maçı sildirmesin."""
+    if df.empty or "takim" not in df or "tarih" not in df:
+        return df
+    gun = pd.to_datetime(df["tarih"], errors="coerce").dt.normalize()
+    sira = gun.groupby(df["takim"]).rank(method="dense", ascending=False)
+    return df[(sira <= n) | sira.isna()]
+
+
+def tabloyu_kirp(db, n=TUTULAN_MAC, tablo="maclar"):
+    """Var olan takım-maç tablosunda her takımın yalnızca son n maç gününü bırakır. Silinen satır sayısını döner.
+    Önce kadın ligi maçları ayrılır (erkek takımının son 10 maçında yer kaplamasınlar)."""
+    kadinlari_ayir_db(db, tablo)
+    with sqlite3.connect(db) as con:
+        if not con.execute("SELECT name FROM sqlite_master WHERE name = ?", (tablo,)).fetchone():
+            return 0
+        cur = con.execute(f"""DELETE FROM "{tablo}" WHERE rowid IN (SELECT rowid FROM (
+            SELECT rowid, DENSE_RANK() OVER (PARTITION BY takim ORDER BY date(tarih) DESC) AS sira FROM "{tablo}")
+            WHERE sira > ?)""", (n,))
+        return cur.rowcount
+
+
+def sikistir(db):
+    """Silinen satırlardan kalan boşluğu atar (dosya küçülür)."""
+    try:
+        with sqlite3.connect(db) as con:
+            con.execute("VACUUM")
+    except sqlite3.Error:
+        pass
+
+
 def ekle(yeni):
     """Hazırlanmış satırları maclar tablosuna ekler; aynı (mac_id, takim) varsa yenisi geçerli.
     Yeni istatistik kolonları gelirse tablo genişletilir."""
@@ -70,8 +149,9 @@ def ekle(yeni):
             eski = pd.read_sql("SELECT * FROM maclar", con)
         except Exception:
             eski = pd.DataFrame()
-        tum = pd.concat([eski, yeni], ignore_index=True)
+        tum = kadin_ayir(pd.concat([eski, yeni], ignore_index=True))
         tum = sayiya_cevir(tum.drop_duplicates(subset=["mac_id", "takim"], keep="last"))
+        tum = son_n_birak(tum)
         tum.to_sql("maclar", con, if_exists="replace", index=False)
         con.execute("CREATE INDEX IF NOT EXISTS ix_takim ON maclar(takim, tarih)")
         con.execute("CREATE INDEX IF NOT EXISTS ix_lig ON maclar(lig)")
