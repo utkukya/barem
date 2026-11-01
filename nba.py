@@ -48,7 +48,10 @@ SOFA_TURNUVA = 132       # SofaScore turnuva kimliği (NBA)
 STATLAR = {"sayi": ("Sayı", "SAY"), "rib": ("Ribaund", "RİB"), "ast": ("Asist", "AST"),
            "uc_i": ("3 sayılık isabet", "3S"), "tc": ("Top çalma", "TÇ"), "blok": ("Blok", "BLK"),
            "tk": ("Top kaybı", "TK"), "pra": ("Sayı + Rib + Ast", "SRA"), "pr": ("Sayı + Rib", "SR"),
-           "pa": ("Sayı + Ast", "SA"), "ra": ("Rib + Ast", "RA"), "uc_a": ("3 sayılık deneme", "3SD")}
+           "pa": ("Sayı + Ast", "SA"), "ra": ("Rib + Ast", "RA"), "uc_a": ("3 sayılık deneme", "3SD"),
+           "tcb": ("Top çalma + Blok", "TÇB"), "sg_i": ("İsabetli şut (2+3)", "İŞ"),
+           "sg_a": ("Şut denemesi (2+3)", "ŞD"), "sa_a": ("Serbest atış denemesi", "SAD"),
+           "sa_i": ("Serbest atış isabeti", "SAİ")}
 
 
 # ---------------------------------------------------------------- veritabanı
@@ -661,6 +664,7 @@ def verileri_yukle():
     kutu["ra"] = kutu["rib"] + kutu["ast"]
     kutu["sg_a"] = kutu["iki_a"] + kutu["uc_a"]
     kutu["sg_i"] = kutu["iki_i"] + kutu["uc_i"]
+    kutu["tcb"] = kutu["tc"] + kutu["blok"]
     kutu = pozisyon_ata(kutu, kadro)
     return maclar, kutu, kadro, bulten
 
@@ -803,7 +807,11 @@ KAMBI_PARAM = {"lang": "en_GB", "market": "GB"}
 KAMBI_SAAT = 30  # maç başlangıcına bu kadar saatten fazla varsa oyuncu pazarı istenmez
 PROP_STAT = [  # (anahtar kelime, istatistik) — özelden genele
     (("points, rebounds", "assists"), "pra"), (("points", "rebounds"), "pr"), (("points", "assists"), "pa"),
-    (("rebounds", "assists"), "ra"), (("three",), "uc_i"), (("3-point",), "uc_i"), (("3 point",), "uc_i"),
+    (("rebounds", "assists"), "ra"), (("steals", "blocks"), "tcb"),
+    (("three", "attempt"), "uc_a"), (("3-point", "attempt"), "uc_a"), (("3 point", "attempt"), "uc_a"),
+    (("three",), "uc_i"), (("3-point",), "uc_i"), (("3 point",), "uc_i"),
+    (("free throw", "attempt"), "sa_a"), (("free throws", "made"), "sa_i"), (("free throw",), "sa_i"),
+    (("field goal", "attempt"), "sg_a"), (("field goals made",), "sg_i"), (("field goal",), "sg_i"),
     (("points",), "sayi"), (("rebounds",), "rib"), (("assists",), "ast"), (("steals",), "tc"),
     (("blocks",), "blok"), (("turnovers",), "tk"),
 ]
@@ -840,8 +848,8 @@ def _prop_stat(etiket):
     """Pazar adından istatistik. "10+ Points Scored By The Player" gibi eşik pazarlarında da istatistik döner
     (eşik ayrıca _esik ile okunur)."""
     a = re.sub(r"^\s*\d+\+\s*", "", (etiket or "").lower())
-    if "player" not in a or any(x in a for x in PROP_DISLA) or "steals & blocks" in a:
-        return None  # birleşik top çalma + blok alınmaz
+    if "player" not in a or any(x in a for x in PROP_DISLA):
+        return None
     for kelimeler, stat in PROP_STAT:
         if all(k in a for k in kelimeler):
             return stat

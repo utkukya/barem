@@ -566,7 +566,8 @@ def props_eslesmis(damga):
     return nba.props_esle(nba.props_yukle(), kutu_)
 
 
-KART_STATLAR = ["sayi", "ast", "rib", "uc_i", "pa", "pra", "pr", "ra", "tc", "blok", "uc_a"]
+KART_STATLAR = ["sayi", "ast", "rib", "uc_i", "pa", "pra", "pr", "ra", "tc", "blok", "tcb", "tk", "uc_a", "sg_i",
+                "sg_a", "sa_a"]
 
 with sekme_kart:
     pe = props_eslesmis(damga)
@@ -784,6 +785,34 @@ with sekme_kart:
         </div>"""
         st.html(sag_html)
 
+    # Tüm istatistikler: son 5 maç (en eski -> en yeni) ve varsa piyasa çizgisi
+    satir5 = ""
+    for k_ in KART_STATLAR:
+        son5 = log_tum[k_].tail(5).tolist()
+        p_ = pe[(pe["oyuncu_id"] == oid) & (pe["stat"] == k_)] if len(pe) else pe
+        if len(p_):
+            p_ = p_.assign(_ou=pd.to_numeric(p_["alt_oran"], errors="coerce").isna()).sort_values("_ou")
+            c_ = float(p_["cizgi"].iloc[0])
+            ust_ = sum(v > c_ for v in son5)
+            cizgi_html = f'<span class="c">{c_:g}</span><span class="h">{ust_}/{len(son5)} üst</span>'
+        else:
+            cizgi_html = '<span class="h" style="color:#666">piyasa yok</span>'
+        degerler = " ▸ ".join(f"{v:.0f}" for v in son5[:-1])
+        son = f'<b>{son5[-1]:.0f}</b>' if son5 else ""
+        satir5 += (f'<div class="s5"><div><div class="ad">{e(nba.STATLAR[k_][0])}</div>'
+                   f'<div class="dz">Son 5: {degerler}{" ▸ " if len(son5) > 1 else ""}{son}</div></div>'
+                   f'<div class="sg">{cizgi_html}</div></div>')
+    st.html(f"""<style>
+      .s5w{{background:#16181d;border-radius:10px;padding:6px 14px;font-family:system-ui,sans-serif;color:#eee}}
+      .s5{{display:flex;justify-content:space-between;align-items:center;padding:8px 0;border-bottom:1px solid #262a31}}
+      .s5:last-child{{border-bottom:none}} .s5 .ad{{font-weight:600;font-size:14px}}
+      .s5 .dz{{font-size:12px;color:#9aa3ad;margin-top:2px}}
+      .s5 .dz b{{background:#3a4250;color:#fff;padding:0 5px;border-radius:4px}}
+      .s5 .sg{{text-align:right;font-size:12px}} .s5 .c{{font-weight:700;font-size:14px;margin-right:8px}}
+      .s5 .h{{color:#2bd98a}}
+    </style><div class="s5w"><div style="font-size:12px;color:#9a9a9a;text-transform:uppercase;
+      letter-spacing:.06em;padding:6px 0">Tüm istatistikler · son 5 maç</div>{satir5}</div>""")
+
 
 # ================================================================ Barem tarayıcı
 @st.cache_data(show_spinner="Oyuncu baremleri son maçlarla karşılaştırılıyor…")
@@ -793,7 +822,8 @@ def tarama(damga, n):
     return hazir.nba_tarama(kutu_, n, lig=LIG_ADI)
 
 
-TARAMA_STAT = ["sayi", "rib", "ast", "uc_i", "pra", "pr", "pa", "ra", "tc", "blok", "tk"]
+TARAMA_STAT = ["sayi", "rib", "ast", "uc_i", "pra", "pr", "pa", "ra", "tc", "blok", "tcb", "tk", "uc_a", "sg_i", "sg_a",
+               "sa_a", "sa_i"]
 
 
 def yuzde_n(v, k):
