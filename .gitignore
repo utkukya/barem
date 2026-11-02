@@ -19,3 +19,4 @@ ayarlar.json
 .streamlit/secrets.toml
 guncelleme_log.txt
 yayinla_log.txt
+bekleme_log.txt
